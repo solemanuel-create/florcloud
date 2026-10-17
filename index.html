@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#07090d">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="description" content="v1su4rt: shaders visuais que reagem ao microfone e ao giroscópio.">
+    <title>v1su4rt</title>
+    <link rel="icon" href="./icon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="./icons/icon-192.png">
+    <link rel="manifest" href="./manifest.webmanifest">
+    <link rel="stylesheet" href="./assets/styles.css">
+    <script src="./assets/shaders.glsl.js" defer></script>
+    <script src="./assets/shaders.js" defer></script>
+    <script src="./assets/interaction.js" defer></script>
+    <script src="./assets/app.js" defer></script>
+  </head>
+  <body>
+    <canvas id="stage" aria-hidden="true"></canvas>
+
+    <section class="panel" id="panel" aria-label="Controles das interações">
+      <div class="panel-head">
+        <button class="button" id="interaction-toggle" type="button" aria-pressed="false">Ativar interações</button>
+        <button class="collapse" id="panel-collapse" type="button" aria-expanded="true" aria-controls="panel-body" aria-label="Recolher controles"><span aria-hidden="true"></span></button>
+      </div>
+      <div class="panel-body" id="panel-body">
+        <p class="note" id="interaction-note">Use microfone e giroscópio para animar as formas. Requer permissão e HTTPS.</p>
+        <p class="status" id="interaction-status" role="status" aria-live="polite"></p>
+        <div class="controls">
+          <div class="control">
+            <label for="audio-sens">Sensibilidade áudio</label>
+            <output id="audio-sens-value" for="audio-sens">1.50</output>
+            <input id="audio-sens" type="range" min="0" max="3" step="0.05" value="1.5">
+          </div>
+          <div class="control">
+            <label for="orient-sens">Sensibilidade giroscópio</label>
+            <output id="orient-sens-value" for="orient-sens">1.50</output>
+            <input id="orient-sens" type="range" min="0" max="3" step="0.05" value="1.5">
+          </div>
+          <div class="control">
+            <label for="cloud-intens">Intensidade da nuvem de pontos</label>
+            <output id="cloud-intens-value" for="cloud-intens">1.00</output>
+            <input id="cloud-intens" type="range" min="0" max="2" step="0.05" value="1">
+          </div>
+        </div>
+        <a class="privacy" href="./privacy.html">Privacidade</a>
+      </div>
+    </section>
+
+    <noscript><p class="noscript">Este site precisa de JavaScript para desenhar os visuais.</p></noscript>
+  </body>
+</html>
