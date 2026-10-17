@@ -1,5 +1,7 @@
 /* v1su4rt — sensores: microfone (AudioContext + AnalyserNode) e giroscópio
-   (deviceorientation). Nada é gravado nem enviado: os valores só alimentam o shader. */
+   (deviceorientation). Nada é gravado nem enviado: os valores só alimentam o shader.
+   Saem sete canais por frame: nível, grave, médio, agudo, batida (ataque dos graves),
+   contratempo (ataque dos agudos) e timbre (que som é, não quanto som há). */
 (function () {
   'use strict';
 
@@ -7,8 +9,10 @@
 
   /* Toda a afinação do ouvido vive neste bloco: é o único sítio a mexer para mudar
      como a flor escuta. As bandas dizem o que cada uniforme recebe, o ataque e o
-     release dizem quão depressa se move, e a batida diz quando entra o flash.
-     Tudo em 0..1 salvo indicação em contrário. */
+     release dizem quão depressa se move, a batida diz quando entra o flash (grave) e
+     o contratempo diz quando entra o cintilar (agudos), o timbre diz que cor o
+     som tem, e a re-centragem diz quanto tempo uma pose do aparelho deixa de ser
+     novidade. Tudo em 0..1 salvo indicação em contrário. */
   const TUNE = {
     // analisador: 1024 dá 512 bins; a 48 kHz cada bin vale ~47 Hz
     fftSize: 1024,
@@ -59,6 +63,40 @@
     // uma entrada fraca volta a ficar elegível a subir o slider.
     beatMinLevel: 0.12,
 
+    // segundo canal de batida, nos AGUDOS. O grave isolado nunca dava flash em
+    // palmas, estalidos, prato fechado nem voz consoante forte — tudo o que é
+    // ataque sem bombo. É um canal separado com limiar e refractária próprios, e o
+    // valor que produz (pulse2) só entra na amplitude do cintilar, nunca no flash do
+    // fundo nem na fragmentação: o orçamento de luz do frame fica o que foi medido.
+    // O portão de volume é o mesmo do grave (loudEnough): sem ele o chiado de uma
+    // sala vazia, que o curso normalizado aproveita todo, punha a flor a tremer para
+    // o nada — é exatamente o erro que o beatMinLevel corrigiu nos graves.
+    beat2AvgRise: 3.0,
+    beat2DevRise: 2.0,
+    beat2Ratio: 1.8,
+    beat2Floor: 0.05,
+    beat2Refractory: 0.10,
+    beat2Decay: 5.5,
+
+    // timbre: centro de massa do espectro em escala log, normalizado entre os dois
+    // limites abaixo. É a única leitura que distingue uma flauta de uma guitarra ao
+    // mesmo volume, e é ela que vai mandar na mistura de cor quando ela existir.
+    // Os bins abaixo de timbreFloorBin (~22 dB acima do piso do analyzer) não
+    // entram na soma: sem este corte o ruído de fundo, que é sempre o que lá está,
+    // puxava o centroid para o meio e o canal não diria nada.
+    timbreLoHz: 60,
+    timbreHiHz: 9000,
+    timbreFloorBin: 8,
+    timbreEase: 2.5, // tau ~400 ms: uma cor não pode piscar a cada frame
+
+    // re-centragem do giroscópio (em 1/s): a pose em que o aparelho está passa
+    // lentamente a ser o novo neutro. Com 0 a base fica presa à pose do instante em
+    // que a permissão foi concedida, e quem segurar o telemóvel a 45º vê a flor
+    // pendurada num lado para sempre. orientDeadband (graus) é o que um gesto tem de
+    // ultrapassar para contar: é o que separa manter o aparelho inclinado de apontar.
+    orientRecenter: 0.1,
+    orientDeadband: 8,
+
     // giroscópio: ±40° de inclinação percorrem o curso todo
     tiltRange: 40,
     tiltEase: 9,
@@ -81,18 +119,14 @@
     constructor() {
       this.audioSens = 1.5;
       this.orientSens = 1.5;
-      this.sm = { level: 0, bass: 0, mid: 0, treble: 0 };
-      this.bassAvg = 0;
-      this.bassDev = 0;
-      this.beatHold = 0;
-      this.floor = { bass: 1, mid: 1, treble: 1 };
-      this.peak = { bass: 0, mid: 0, treble: 0 };
       this.top = new Array(TUNE.topBins).fill(0);
-      this.pulse = 0;
       this.tgt = { x: 0, y: 0 };
       this.tilt = { x: 0, y: 0 };
-      this._onOrient = this._onOrient.bind(this);
+      // toda a memória do ouvido vem de _clearSession(), chamada aqui e em stop():
+      // declará-la nos dois sítios é como um campo novo ficar com lixo de uma sala
+      // anterior quando o utilizador desliga e volta a ligar o microfone
       this._clearSession();
+      this._onOrient = this._onOrient.bind(this);
 
       document.addEventListener('visibilitychange', () => {
         if (!document.hidden && this.ctx && this.ctx.state === 'suspended') this.ctx.resume();
@@ -107,11 +141,13 @@
       this.analyser = null;
       this.freq = null;
       this.wave = null;
+      this.logTab = null;
       this.audioOn = false;
       this.orientOn = false;
       this.orientSeen = false;
       this.base = null;
       this.baseAng = null;
+      this.cur = { x: 0, y: 0 };
       this.tgt.x = 0;
       this.tgt.y = 0;
       // arranque limpo: o piso entra pelo topo e o pico pelo fundo, para que a
@@ -119,7 +155,15 @@
       this.bassAvg = 0;
       this.bassDev = 0;
       this.beatHold = 0;
+      this.trebAvg = 0;
+      this.trebDev = 0;
+      this.beat2Hold = 0;
       this.pulse = 0;
+      this.pulse2 = 0;
+      // 0,5 é o meio do curso: sem microfone o timbre não desloca nada e a flor
+      // comporta-se exatamente como se este canal não existisse
+      this.timbre = 0.5;
+      this.timbreTgt = 0.5;
       this.floor = { bass: 1, mid: 1, treble: 1 };
       this.peak = { bass: 0, mid: 0, treble: 0 };
       this.sm = { level: 0, bass: 0, mid: 0, treble: 0 };
@@ -204,6 +248,7 @@
         this.analyser = an;
         this.freq = new Uint8Array(an.frequencyBinCount);
         this.wave = new Uint8Array(an.fftSize);
+        this._buildSpectrumMaps();
         return 'ok';
       } catch (e) {
         try { ctx.close(); } catch (_) { /* ignora */ }
@@ -227,13 +272,53 @@
       if (ang === 90) { ax = e.beta; ay = -e.gamma; }
       else if (ang === 270) { ax = -e.beta; ay = e.gamma; }
       else if (ang === 180) { ax = -e.gamma; ay = -e.beta; }
-      // a posição em que o aparelho está ao ativar vira o centro
+      // o aparelho mudar de orientação é um acontecimento, não uma pose: aí a base
+      // salta para o centro novo na hora, porque os eixos deixaram de ser os mesmos
       if (this.base === null || this.baseAng !== ang) {
         this.base = { x: ax, y: ay };
         this.baseAng = ang;
       }
-      this.tgt.x = clamp((ax - this.base.x) / TUNE.tiltRange, -1, 1);
-      this.tgt.y = clamp((ay - this.base.y) / TUNE.tiltRange, -1, 1);
+      // o ângulo atual guarda-se e lê-se em update(dt): a re-centragem precisa de dt,
+      // e o evento chega a 60 Hz enquanto o renderizador corre a 30 num celular fraco
+      this.cur.x = ax;
+      this.cur.y = ay;
+    }
+
+    /* Tabelas do espectro, uma vez por microfone aberto. O centroid precisa do log
+       de cada bin, e fazê-lo dentro do laço custaria ~370 logs por frame para nada:
+       a frequência dos bins só depende do sampleRate. Os limites da normalização
+       saem dos bins efetivamente somados, para que o curso inteiro do timbre seja
+       realmente percorrido seja qual for a taxa de amostragem do aparelho. */
+    _buildSpectrumMaps() {
+      const hz = this.ctx.sampleRate / this.analyser.fftSize;
+      const n = this.freq.length;
+      const tab = new Float64Array(n);
+      for (let i = 0; i < n; i++) tab[i] = Math.log((i + 0.5) * hz);
+      this.logTab = tab;
+      this.cLo = clamp(Math.floor(TUNE.timbreLoHz / hz), 1, n - 1);
+      this.cHi = Math.max(this.cLo + 1, Math.min(Math.ceil(TUNE.timbreHiHz / hz), n - 1));
+      this.cLoLog = tab[this.cLo];
+      this.cHiLog = tab[this.cHi];
+    }
+
+    /* Centro de massa do espectro, em escala log. É a única leitura que não diz
+       quanto som há, mas que som é: o mesmo golpe de prato e de bombo têm volumes
+       iguais e centroids a anos-luz um do outro. Devolve -1 quando nada tem
+       energia suficiente para entrar na soma, e quem chama mantém o último valor —
+       um salto para o meio em cada pausa da música ia ler-se como uma mudança de cor. */
+    _centroid() {
+      const f = this.freq;
+      const tab = this.logTab;
+      let w = 0;
+      let s = 0;
+      for (let i = this.cLo; i <= this.cHi; i++) {
+        const v = f[i];
+        if (v < TUNE.timbreFloorBin) continue;
+        s += tab[i] * v;
+        w += v;
+      }
+      if (w <= 0) return -1;
+      return clamp((s / w - this.cLoLog) / (this.cHiLog - this.cLoLog), 0, 1);
     }
 
     /* Pico da banda: a média dos `topBins` bins mais fortes, não de toda a banda.
@@ -304,6 +389,8 @@
         B = this._bandLevel('bass', this._peakBand(TUNE.bands.bass[0], TUNE.bands.bass[1], hz), dt);
         M = this._bandLevel('mid', this._peakBand(TUNE.bands.mid[0], TUNE.bands.mid[1], hz), dt);
         T = this._bandLevel('treble', this._peakBand(TUNE.bands.treble[0], TUNE.bands.treble[1], hz), dt);
+        const rawTimbre = this._centroid();
+        if (rawTimbre >= 0) this.timbreTgt = rawTimbre;
       }
       // release a 7 (tau ~140 ms): a 4 a nuvem de pontos não cintila com os agudos
       const ease = (cur, target) => cur + (target - cur) * (1 - Math.exp(-dt * (target > cur ? TUNE.attack : TUNE.release)));
@@ -311,6 +398,10 @@
       this.sm.bass = ease(this.sm.bass, B);
       this.sm.mid = ease(this.sm.mid, M);
       this.sm.treble = ease(this.sm.treble, T);
+      // O timbre é o único canal sem ataque/release assimétricos: é uma posição no
+      // espectro, não uma intensidade. Ease a 2,5 (tau ~400 ms) e, nas pausas da
+      // música, fica onde estava em vez de fugir para o meio.
+      this.timbre += (this.timbreTgt - this.timbre) * (1 - Math.exp(-dt * TUNE.timbreEase));
 
       // batida: um grave que salta acima do desvio recente, com refractária para
       // não perder as batidas rápidas nem retrigar num grave que só toca corrido
@@ -324,9 +415,48 @@
       }
       this.pulse *= Math.exp(-dt * TUNE.beatDecay);
 
+      // contratempo: o mesmo detetor sobre os AGUDOS. É o que faz uma palma, um
+      // estalido ou o prato fechado darem o cintilar que o bombo dá ao flash. O
+      // portão de volume é partilhado de propósito: o que autoriza um golpe é a sala
+      // estar a dar som, não o microfone estar a ouvir o próprio chiado.
+      this.trebAvg += (T - this.trebAvg) * (1 - Math.exp(-dt * TUNE.beat2AvgRise));
+      this.trebDev += (Math.abs(T - this.trebAvg) - this.trebDev) * (1 - Math.exp(-dt * TUNE.beat2DevRise));
+      this.beat2Hold = Math.max(0, this.beat2Hold - dt);
+      const trebleJump = T - this.trebAvg;
+      if (this.beat2Hold <= 0 && loudEnough && trebleJump > Math.max(TUNE.beat2Floor, this.trebDev * TUNE.beat2Ratio)) {
+        this.pulse2 = 1;
+        this.beat2Hold = TUNE.beat2Refractory;
+      }
+      this.pulse2 *= Math.exp(-dt * TUNE.beat2Decay);
+
+      this._recenter(dt);
       const k = 1 - Math.exp(-dt * TUNE.tiltEase);
       this.tilt.x += (this.tgt.x - this.tilt.x) * k;
       this.tilt.y += (this.tgt.y - this.tilt.y) * k;
+    }
+
+    /* Re-centragem lenta: a pose em que o aparelho está passa a ser o neutro, por
+       isso segurar o telemóvel inclinado deixa de deixar a flor pendurada para
+       sempre. A banda morta é o que separa isso de apontar: sem ela, o gesto que se
+       mantém dez segundos apaga-se a si próprio a meio. O equilíbrio é um desvio de
+       exatamente orientDeadband — uma pose largada fica sempre a pender oito graus,
+       que é o suficiente para se ler como intenção e não como defeito. */
+    _recenter(dt) {
+      if (!this.base) {
+        this.tgt.x = 0;
+        this.tgt.y = 0;
+        return;
+      }
+      const dx = this.cur.x - this.base.x;
+      const dy = this.cur.y - this.base.y;
+      if (this.orientOn && TUNE.orientRecenter > 0) {
+        const k = 1 - Math.exp(-dt * TUNE.orientRecenter);
+        const db = TUNE.orientDeadband;
+        if (Math.abs(dx) > db) this.base.x += (dx - Math.sign(dx) * db) * k;
+        if (Math.abs(dy) > db) this.base.y += (dy - Math.sign(dy) * db) * k;
+      }
+      this.tgt.x = clamp(dx / TUNE.tiltRange, -1, 1);
+      this.tgt.y = clamp(dy / TUNE.tiltRange, -1, 1);
     }
 
     /* Valores prontos para o shader, já com a sensibilidade aplicada.
@@ -343,6 +473,12 @@
         mid: c(this.sm.mid),
         treble: c(this.sm.treble),
         pulse: c(this.pulse),
+        // o contratempo não passa pela sensibilidade: é um cintilar, e o que o
+        // autoriza é a sala estar a dar som (loudEnough), não o slider estar no topo
+        pulse2: clamp(this.pulse2, 0, 1),
+        // 0,5 sem microfone: o timbre é a única leitura que existe mesmo quando o
+        // áudio está desligado, e tem de dizer "neutro" e não "grave" ou "agudo"
+        timbre: clamp(this.timbre, 0, 1),
         tiltX: clamp(this.tilt.x * this.orientSens, -2, 2),
         tiltY: clamp(this.tilt.y * this.orientSens, -2, 2),
       };

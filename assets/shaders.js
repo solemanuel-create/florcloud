@@ -403,7 +403,11 @@
   let fpsAvg = 60;
   let lastTune = 0;
 
-  const state = { audio: 0, bass: 0, mid: 0, treble: 0, pulse: 0, tiltX: 0, tiltY: 0, cloud: 1 };
+  const state = { audio: 0, bass: 0, mid: 0, treble: 0, pulse: 0, pulse2: 0, timbre: 0.5, tiltX: 0, tiltY: 0, cloud: 1 };
+
+  // escala do flash e do contratempo, separada do timeScale: prefers-reduced-motion
+  // pode abrandar o movimento sem deixar um estroboscópio de tela cheia a 1,0
+  let flashScale = 1;
 
   /* ========== GL ========== */
 
@@ -471,7 +475,7 @@
       ['a_pos', 'a_norm', 'a_col', 'a_seed', 'a_rad', 'a_band'],
       [
         'u_proj', 'u_view', 'u_model', 'u_normalMat', 'u_eye', 'u_time', 'u_audio', 'u_bass',
-        'u_mid', 'u_treble', 'u_pulse', 'u_phase', 'u_cloud', 'u_size', 'u_maxPx',
+        'u_mid', 'u_treble', 'u_pulse', 'u_pulse2', 'u_timbre', 'u_phase', 'u_cloud', 'u_size', 'u_maxPx',
       ]
     );
     if (!progBg || !progPoints) return false;
@@ -631,6 +635,8 @@
     gl.uniform1f(p.uniform.u_mid, state.mid);
     gl.uniform1f(p.uniform.u_treble, state.treble);
     gl.uniform1f(p.uniform.u_pulse, state.pulse);
+    gl.uniform1f(p.uniform.u_pulse2, state.pulse2);
+    gl.uniform1f(p.uniform.u_timbre, state.timbre);
     gl.uniform1f(p.uniform.u_phase, phase);
     gl.uniform1f(p.uniform.u_cloud, state.cloud);
     gl.uniform1f(p.uniform.u_size, pointPx);
@@ -760,7 +766,11 @@
     state.bass = c01(obj.bass);
     state.mid = c01(obj.mid);
     state.treble = c01(obj.treble);
-    state.pulse = c01(obj.pulse);
+    state.pulse = c01(obj.pulse) * flashScale;
+    state.pulse2 = c01(obj.pulse2) * flashScale;
+    // sem canal de timbre no driver, fica onde estava: 0 daria "tudo graves" e a
+    // corola ler-se-ia com a fronteira trocada num navegador sem microfone
+    if (obj.timbre != null) state.timbre = clamp(Number(obj.timbre) || 0, 0, 1);
     if (obj.tilt) {
       state.tiltX = obj.tilt[0] || 0;
       state.tiltY = obj.tilt[1] || 0;
@@ -781,6 +791,9 @@
       return true;
     },
     setTimeScale: function (k) { timeScale = clamp(k, 0.05, 4); },
+    // escala do flash (batida) e do contratempo (cintilar dos agudos): 1 é o valor
+    // do microfone, 0,4 deixa a batida legível sem um estroboscópio a tela cheia
+    setFlashScale: function (k) { flashScale = clamp(Number(k) || 0, 0, 1); },
     // ganho da nuvem de pontos: 0 apaga, 1 é o valor desenhado, 2 duplica o brilho
     // e dá um quarto mais de tamanho a cada ponto
     setCloudIntensity: function (v) { state.cloud = clamp(Number(v) || 0, 0, 2); },

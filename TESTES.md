@@ -20,6 +20,11 @@ Com **Ativar interações** ligado e música com grave e agudo separáveis:
 - [ ] **Batidas**: uma onda visível corre da borda para o centro; a rotação dá um empurrão.
 - [ ] **Médios**: as pétalas ondulam à volta do centro (vaga em azimute) e a orla ganha brilho.
 - [ ] **Agudos**: o miolo acende e os pontos da corola cintilam mais depressa; as **orlas/pontas das pétalas tremelicam** sem que a flor inteira fique mais clara (a média de luz não muda).
+- [ ] **Palmas / estalidos / prato fechado** (ataque sem bombo): as orlas ficam mais densas e irregulares por uma fração de segundo. A flor **não** dá flash de fundo — é o contratempo, não a batida.
+- [ ] **Timbre**: uma nota grave sostenida e uma nota aguda sostenida, ao mesmo volume, põem a borda acesa em sítios diferentes da corola. A música passa a ler-se por *que* som é, não só por quanto som há.
+- [ ] **Bater no ecrã** dá exatamente o flash de uma batida de grave (mesma luz, mesmo decaimento). Teste **com o microfone negado**: continua a dar.
+- [ ] Bater no ecrã **não** mexe no medidor nem faz o vigia de sinal calar — o dedo não finge que há som.
+- [ ] **Giroscópio**: incline o aparelho e segure-o assim 15–30 s → a flor volta a centrar-se devagar, ficando a pender pouco (8° de banda morta). Um gesto rápido de 0,5 s usa o curso todo e não é apagado.
 - [ ] **Sala vazia, sem música**: a flor **não** pisca nem respira em pulso. O medidor mal se mexe.
 - [ ] **Medidor do microfone** (barra abaixo dos botões): sobe com a voz/música, encosta quase no fim num volume alto e volta a zero no silêncio. Aparece só depois de ativar.
 - [ ] **Vigia de sinal**: ative o microfone e faça silêncio total 5 s → aparece "Microfone ativo, mas não capta nada". Dê som → a mensagem volta à normal.
@@ -69,7 +74,8 @@ Em DevTools → modo dispositivo (ou redimensionando a janela):
 ## 5. Acessibilidade e desempenho
 
 - [ ] Navegação por Tab passa por: botão ativar, **tela cheia**, recolher, sliders, privacidade; foco visível.
-- [ ] Com "reduzir movimento" ligado no sistema, a animação fica mais lenta.
+- [ ] Com "reduzir movimento" ligado no sistema, a animação fica mais lenta **e o flash das batidas fica visivelmente mais fraco** (não um estroboscópio a tela cheia). No console: `v1su4rtShaders.setFlashScale(0)` deve apagar por completo o flash de batida e de toque, sem apagar o resto.
+- [ ] `prefers-reduced-motion` alternado com a página aberta (mudar a preferência do SO) aplica-se sem recarregar.
 - [ ] Em aparelho fraco, a imagem perde definição em vez de travar.
 - [ ] `privacy.html` abre e o link **Voltar** funciona.
 

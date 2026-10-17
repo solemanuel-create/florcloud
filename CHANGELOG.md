@@ -4,6 +4,51 @@ Formato seguido: uma entrada por mudança de visual ou de estrutura, com o `CACH
 correspondente do `service-worker.js` — é ele que diz ao browser para deitar fora a
 versão guardada.
 
+## 2026-10-17 — sete canais de escuta, contratempo, timbre, toque (`v1su4rt-v15`)
+
+Saem sete valores por frame do microfone e do giroscópio: nível, grave, médio, agudo,
+batida, **contratempo** e **timbre**.
+
+- **Toque = batida.** A pressão no canvas injeta o flash pelo mesmo canal e com o mesmo
+  decaimento do detetor de batida, por isso um dedo e um bombo são indiferentes no
+  visual. Era o buraco maior: com a permissão negada, ou num portátil sem microfone,
+  nada do que a flor faz ao ritmo se via. Não passa pelo `level`, para o dedo não calar
+  o vigia de sinal.
+- **Segundo detetor de ataque, nos agudos** (`pulse2`). Palmas, estalidos, prato fechado
+  e voz consoante nunca deram flash porque só o grave era olhado. O contratempo entra
+  apenas na *forma* do cintilar — um segundo harmónico por cima do primeiro — e nunca no
+  flash do fundo nem na fragmentação.
+- **Timbre** (centro de massa do espectro, em escala log): a única leitura que diz *que*
+  som é, não *quanto* som há. Desloca a fronteira grave/agudo dentro da corola. É o
+  alimentador da futura mistura de cor.
+- **Re-centragem da pose do giroscópio**: a inclinação em que o aparelho fica passa a ser
+  o novo neutro (tau ~10 s, banda morta de 8°). Antes, a base era captada uma única vez
+  ao ativar e quem segurasse o celular a 45° via a flor pendurada para sempre. O
+  equilíbrio é pender exatamente `orientDeadband` graus, que se lê como intenção.
+- **`prefers-reduced-motion` agora também corta a luz.** Abrandava o movimento a 35% mas
+  o flash continuava a 1,0 em tela cheia — um estroboscópio a 2 Hz. `setFlashScale(0,4)`
+  mantém a batida legível como pulso.
+
+Medido, não intuído:
+
+- Sintético em Node (15 verificações): sala vazia **0** flashes e **0** contratempos;
+  bombo a 120 BPM **15** batidas em 8 s com **0** contratempos; prato a 240 BPM **31**
+  contratempos com **0** flashes de grave; timbre 0,06 a 90 Hz contra 0,92 a 6 kHz, e
+  seguro no silêncio; re-centragem 0,75 → 0,200 (exatamente `8/40`) em 150 s.
+- Pixels no navegador (489×431, `readPixels` em rAF): toque com `flashScale` 1 dá
+  **+0,076** de luminância média sobre 0,037; com 0,4 dá **+0,032** (razão medida 0,415);
+  com 0 dá **+0,0001** — o corte é mesmo multiplicativo. Timbre 0,05→0,95 move o frame
+  **+5,9%**, pelo que o uniforme chega de facto ao shader.
+- Monte-Carlo dos termos novos sobre 47.012 pontos: com o contratempo no teto o
+  multiplicador de luz vai a **0,998×** do valor sem contratempo (+2,1% no topo de todas
+  as bandas); `spark` nunca desce de 0,10 e `hatFlick` nunca desce de 0,20, portanto o
+  cintilar mais fundo não apaga pontos nem gasta o orçamento de luz.
+- Os 17 uniformes de `VERTEX_POINTS` enumerados no browser: todos ativos, nenhum otimizado
+  (nome otimizado = `getUniformLocation` devolve `null` e o `uniform1f` não faz nada em
+  silêncio).
+
+- `CACHE_NAME`: `v1su4rt-v14` → `v1su4rt-v15`.
+
 ## 2026-10-17 — retrato sem corte, som reativo medido, tela cheia (`v1su4rt-v14`)
 
 Cadeia de áudio reescrita à volta de números medidos, não de intuição:

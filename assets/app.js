@@ -175,6 +175,19 @@
   canvas.addEventListener('pointerup', release);
   canvas.addEventListener('pointercancel', release);
 
+  /* ---------- toque = batida ----------
+
+     O flash sempre veio só do grave captado pelo microfone, por isso com a
+     permissão negada ou num aparelho sem microfone a flor ficava reduzida a um
+     tilt de mouse: nada do que ela faz ao ritmo se via. Agora bate-se no ecrã como
+     num tambor. O golpe entra pelo mesmo canal e com o mesmo decaimento do detetor
+     de batida, por isso um toque e um bombo são indiferentes no visual. Não passa
+     pelo `level`: o vigia de sinal mede o microfone, e um dedo a bater não pode
+     fingir que há som — ia calar o aviso de "não capta nada" para sempre. */
+  const TAP_DECAY = 4.5; // o beatDecay de interaction.js, para darem o mesmo flash
+  let tapPulse = 0;
+  canvas.addEventListener('pointerdown', () => { tapPulse = 1; });
+
   /* ---------- medidor e vigia de sinal ---------- */
 
   // 20 Hz chega para se ver o ataque das batidas e evita reescrever o estilo da
@@ -217,19 +230,29 @@
 
     watchSignal(s.level, dt);
     paintMeter(s.level);
+    tapPulse *= Math.exp(-dt * TAP_DECAY);
 
     return {
       audio: s.level,
       bass: s.bass,
       mid: s.mid,
       treble: s.treble,
-      pulse: s.pulse,
+      // o toque e o bombo partilham o canal: o máx. é o que faz os dois soarem
+      // iguais, quer o microfone esteja aberto quer não
+      pulse: Math.max(s.pulse, tapPulse),
+      pulse2: s.pulse2,
+      timbre: s.timbre,
       tilt: [tiltX, tiltY]
     };
   }
 
   function applyMotionPreference() {
-    window.v1su4rtShaders.setTimeScale(reduceMotion.matches ? 0.35 : 1);
+    const reduce = reduceMotion.matches;
+    window.v1su4rtShaders.setTimeScale(reduce ? 0.35 : 1);
+    // abrandar o movimento não abrandava o flash: o fundo inteiro dava 0,030 de
+    // luz em cada batida, a 2 Hz, o que é um estroboscópio a tela cheia. 0,4 mantém
+    // a batida legível como um pulso e tira-lhe o caráter de lampadação.
+    window.v1su4rtShaders.setFlashScale(reduce ? 0.4 : 1);
   }
 
   if (!window.v1su4rtShaders) {

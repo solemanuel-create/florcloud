@@ -123,6 +123,8 @@ uniform float u_bass;
 uniform float u_mid;
 uniform float u_treble;
 uniform float u_pulse;
+uniform float u_pulse2;
+uniform float u_timbre;
 uniform float u_phase;
 uniform float u_cloud;
 uniform float u_size;
@@ -138,10 +140,16 @@ void main() {
   vec2 dir = normalize(vec2(p.x, p.z) + vec2(0.0001));
   float floral = clamp(a_band, 0.0, 1.0);
 
+  // O timbre desloca a fronteira entre graves e agudos dentro da corola: um som
+  // escuro põe os graves a mandar mais para dentro, um som claro devolve-lhes a
+  // borda. É uma re-leitura das mesmas duas bandas, não uma terceira fonte de luz,
+  // por isso não soma um watt ao frame — o orçamento fica exatamente o medido.
+  float xover = clamp(r + (u_timbre - 0.5) * 0.30, 0.0, 1.0);
+
   // o som mexe na flor toda: abre por raio, ondula a borda nas batidas
   float open = u_bass * 0.30 + u_audio * 0.10;
   float ripple = sin(r * 9.0 - u_time * 5.5) * u_pulse * 0.075;
-  float breath = mix(u_treble, u_bass, r) * 0.10;
+  float breath = mix(u_treble, u_bass, xover) * 0.10;
   float shimmer = sin(p.y * 18.0 + u_time * 3.0 + r * 12.0) * u_mid * 0.012;
   float sway = sin(az * 6.0 + u_time * 2.2) * u_mid * 0.035;
   p.xz += dir * (open + breath) * r * 0.55;
@@ -186,9 +194,15 @@ void main() {
   float face = abs(dot(N, V));
   float trans = pow(max(dot(-N, L), 0.0), 3.0);
   float fres = pow(1.0 - face, 3.0);
-  // cada ponto cintila: os agudos dão a frequência e o centro da corola a intensidade
-  float spark = 0.55 + 0.45 * sin(u_time * (2.5 + u_treble * 9.0) + a_seed.y * 40.0);
-  float band = mix(u_treble, u_bass, r);
+  // Cada ponto cintila: os agudos dão a frequência e o centro da corola a intensidade.
+  // O contratempo não alarga a oscilação — isso empurrava o fator para negativo e
+  // apagava pontos — mete-lhe um segundo harmónico por cima: o waveform fica mais
+  // denso e mais irregular num prato fechado, e a MÉDIA sobre os seeds continua
+  // 0,55 exata porque os dois senos se anulam. Nem mais luz, nem pontos apagados.
+  float sf = u_time * (2.5 + u_treble * 9.0) + a_seed.y * 40.0;
+  float flick = (sin(sf) + u_pulse2 * 0.55 * sin(sf * 2.7 + a_seed.x * 17.0)) / 1.55;
+  float spark = 0.55 + 0.45 * flick;
+  float band = mix(u_treble, u_bass, xover);
 
   // CONTRASTE: 0,02 na sombra contra 2,30 na luz — um range de ~115:1 dentro de
   // cada ponto. Numa nuvem de pontos é isso que desenha a nervura e as orlas: as
@@ -215,8 +229,9 @@ void main() {
   // orla que cintila com os agudos, sem somar luz: a média deste termo sobre os
   // seeds é 1,0 (o seno de uma fase bem espalhada anula-se), por isso as pontas
   // tremem com o prato enquanto o orçamento de luz do frame fica igual.
-  // Amplitude limitada a 0,45: o fator nunca vai a negativo e não apaga pontos.
-  float hatFlick = 1.0 + u_treble * 0.45 * sin(u_time * (3.0 + u_treble * 7.0) + a_seed.z * 24.0);
+  // Amplitude no máximo 0,80 (0,45 dos agudos + 0,35 do contratempo): o fator vai de
+  // 0,20 a 1,80, nunca a negativo, e a média sobre os seeds continua 1,0.
+  float hatFlick = 1.0 + (u_treble * 0.45 + u_pulse2 * 0.35) * sin(u_time * (3.0 + u_treble * 7.0) + a_seed.z * 24.0);
   col *= 0.62 + u_audio * 0.25 + band * 0.15 + (0.16 + 0.15 * u_treble) * spark * (1.0 - r) + 0.95 * smoothstep(0.42, 0.88, r) * hatFlick;
 
   // névoa de profundidade: sem depth buffer é assim que o lado de trás fica atrás.
