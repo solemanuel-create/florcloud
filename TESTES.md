@@ -1,4 +1,4 @@
-# v1su4rt — testes manuais
+# FL0R-CLOUD — testes manuais
 
 Serviço local: `python -m http.server 8000` → `http://localhost:8000`. Para sensores em celular, use a versão publicada em HTTPS.
 

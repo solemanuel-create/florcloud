@@ -1,7 +1,7 @@
 {
   "id": "./",
-  "name": "v1su4rt",
-  "short_name": "v1su4rt",
+  "name": "FL0R-CLOUD",
+  "short_name": "FL0R-CLOUD",
   "description": "Shaders visuais que reagem ao microfone e ao giroscópio.",
   "lang": "pt-BR",
   "start_url": "./index.html",
