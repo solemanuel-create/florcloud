@@ -50,6 +50,12 @@ python -m http.server 8000
 
 Abra `http://localhost:8000`. O microfone funciona em `localhost`; o giroscópio só existe em celular/tablet, então precisa de HTTPS no aparelho.
 
+Para conferir os shaders e as suas listas sem abrir o navegador (Node 18+, sem dependências):
+
+```bash
+node scripts/check.mjs
+```
+
 ## Publicar no Vercel
 
 O `vercel.json` já declara o projeto como estático (sem framework, sem build, saída na raiz), então basta:
@@ -79,6 +85,7 @@ O `service-worker.js` é servido com `no-store` para o Vercel não o cachear e p
 | Estrutura da página, ordem dos scripts | [`index.html`](index.html) |
 | Cache offline, versão do deploy | [`service-worker.js`](service-worker.js) — `CACHE_NAME` |
 | Cache-Control e detecção de static no Vercel | [`vercel.json`](vercel.json) |
+| Conferência estática dos shaders, das listas de uniformes e da ordem dos scripts | [`scripts/check.mjs`](scripts/check.mjs) |
 | O que vai no deploy do Vercel | [`.vercelignore`](.vercelignore) |
 | Histórico das mudanças | [`CHANGELOG.md`](CHANGELOG.md) |
 
@@ -90,6 +97,7 @@ O `service-worker.js` é servido com `no-store` para o Vercel não o cachear e p
 - `manifest.webmanifest`, `icon.svg`, `icons/`: instalação como app.
 - `privacy.html`: nota de privacidade.
 - `scripts/deploy.ps1`: stage, commit e push.
+- `scripts/check.mjs`: conferência estática, sem dependências. Lê o texto GLSL dos quatro shaders e as listas de `buildProgram()` de `shaders.js`, e reclama nos quatro sentidos: nome na lista que o shader não tem, nome que o shader lê e a lista não envia, `varying` com precisões diferentes entre os estágios, uniforme listado que o renderizador nunca escreve. Também passa os cinco `.js` por um parser, confere a ordem dos scripts no `index.html` e que cada arquivo do `APP_FILES` existe. **Corre-o antes de commitar qualquer mexida nos shaders:** um nome de uniforme escrito a menos é `getUniformLocation` devolver `null` e `gl.uniform1f(null, v)` não fazer nada em silêncio — o visual fica morto e a consola limpa.
 - `ESF-01.slnx`: agrupa os arquivos no Visual Studio 2026.
 - `TESTES.md`: roteiro de testes manuais.
 
@@ -98,6 +106,7 @@ Ordem de carregamento: `shaders.glsl.js` → `shaders.js` → `interaction.js` �
 ## Problemas comuns
 
 - **Versão antiga aparecendo:** aumente `CACHE_NAME` no `service-worker.js`, ou desregistre em DevTools → Application → Service Workers. Em desenvolvimento, active **Disable cache** no DevTools: o service worker deixa passar pedidos que peçam recarregamento forçado.
+- **O primeiro frame demora:** escreva `v1su4rtShaders.buildTime()` na consola. É o tempo de CPU gasto a sortear os 47 mil pontos, antes de se desenhar seja o que for — medido 68–102 ms num desktop e o número a olhar num celular antes de se decidir se a construção merece um worker. Não é uma tela em branco longa por causa de rede: os `.js` somam ~90 KB.
 - **Microfone sem reação:** olhe primeiro para o **medidor** abaixo dos botões. Se ele não se mexer, o problema é a captura (permissão, HTTPS, ou o microfone errado no sistema) e não o shader — ao fim de 5 s sem sinal o painel diz isso mesmo. Se ele mexer e a flor não, aumente **Sensibilidade áudio**.
 - **A flor pisca sozinha num quarto silencioso:** não devia acontecer (as bandas só sobem com sinal acima do seu curso mínimo). Se acontecer, suba `beatFloor`/`beatMinLevel` no bloco `TUNE`.
 - **Palmas e pratos não se veem:** o cintilar dos agudos é discreto de propósito (não soma luz ao frame). Se não notar nada, suba **Sensibilidade do áudio**; se ainda assim não chegar, desça `beat2Floor` ou suba `beat2Ratio` em `TUNE` — o primeiro deixa entrar mais golpes, o segundo exige saltos maiores.

@@ -179,7 +179,7 @@
 
      O flash sempre veio só do grave captado pelo microfone, por isso com a
      permissão negada ou num aparelho sem microfone a flor ficava reduzida a um
-     tilt de mouse: nada do que ela faz ao ritmo se via. Agora bate-se no ecrã como
+     tilt de mouse: nada do que ela faz ao ritmo se via. Agora bate-se na tela como
      num tambor. O golpe entra pelo mesmo canal e com o mesmo decaimento do detetor
      de batida, por isso um toque e um bombo são indiferentes no visual. Não passa
      pelo `level`: o vigia de sinal mede o microfone, e um dedo a bater não pode

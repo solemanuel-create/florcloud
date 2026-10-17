@@ -11,6 +11,25 @@
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
   const c01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
+  /* A nuvem é sorteada uma vez, e com semente: com Math.random() cada recarga
+     dava outra distribuição de pontos e outra atribuição de fases, por isso o
+     enquadramento e o brilho que se afinam numa tela não eram os que o público vê
+     no outro — nem uma fotografia tirada ao vivo servia para comparar. É ruído
+     espacial, não segredo: um mulberry32 chega e é reprodutível em qualquer
+     navegador. */
+  function mulberry32(seed) {
+    let a = seed >>> 0;
+    return function () {
+      a = (a + 0x6d2b79f5) >>> 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  const CLOUD_SEED = 0x51f07ac;
+  let rnd = mulberry32(CLOUD_SEED);
+
   /* ========== SHADERS ========== */
 
   // O texto GLSL vive em shaders.glsl.js, carregado antes deste arquivo: assim,
@@ -26,12 +45,17 @@
 
   // Lâmina (pétala ou folha): perfil ao longo do comprimento, curvatura e copo,
   // depois levantada em torno de X e rodada em torno do eixo Y pela azimute.
+  // Escreve no `out` que recebe, porque é chamada cinco vezes por ponto para as
+  // diferenças finitas da normal. Nota medida: isto não acelerou a construção — os
+  // ~73 ms do arranque são a matemática (1,4 M chamadas transcendentais), não o
+  // lixo; ver buildTime() e o CHANGELOG do v16. Ficou assim porque o construtor já
+  // partilha os rascunhos, não porque valha por si.
   function bladeSampler(o, azimuth) {
     const ct = Math.cos(o.tilt);
     const st = Math.sin(o.tilt);
     const ca = Math.cos(azimuth);
     const sa = Math.sin(azimuth);
-    return function (u, v01) {
+    return function (u, v01, out) {
       const v = v01 - 0.5;
       const profile = Math.pow(u, o.round) * (1 - o.tip * Math.pow(u, o.tipPow));
       const x = v * o.width * profile;
@@ -39,26 +63,29 @@
       const y = o.curl * o.length * u * u + o.cup * o.width * 4 * v * v + o.twist * o.length * u * v;
       const yy = y * ct + z * st + o.y;
       const zz = -y * st + z * ct;
-      return [x * ca + zz * sa, yy, -x * sa + zz * ca + o.zoff];
+      const o3 = out || [0, 0, 0];
+      o3[0] = x * ca + zz * sa;
+      o3[1] = yy;
+      o3[2] = -x * sa + zz * ca + o.zoff;
+      return o3;
     };
   }
 
   function bladeColor(a, b) {
-    return function (u, v) {
+    return function (u, v, out) {
       const k = Math.pow(u, 0.8);
       const midrib = 1 + 0.30 * Math.exp(-(v * v) / 0.010);
       const edge = 1 - 0.22 * Math.pow(Math.abs(v) * 2, 3);
       const f = midrib * edge;
-      return [
-        clamp(a[0] + (b[0] - a[0]) * k, 0, 1.2) * f,
-        clamp(a[1] + (b[1] - a[1]) * k, 0, 1.2) * f,
-        clamp(a[2] + (b[2] - a[2]) * k, 0, 1.2) * f,
-      ];
+      const o3 = out || [0, 0, 0];
+      o3[0] = clamp(a[0] + (b[0] - a[0]) * k, 0, 1.2) * f;
+      o3[1] = clamp(a[1] + (b[1] - a[1]) * k, 0, 1.2) * f;
+      o3[2] = clamp(a[2] + (b[2] - a[2]) * k, 0, 1.2) * f;
+      return o3;
     };
   }
 
-  // voltas de pétalas, de fora (deitada) para dentro (direita)
-  // voltas de pétalas, de fora (deitada) para dentro (direita). A paleta segue o
+  // voltas de pétalas, de fora (deitada) para dentro (ereta). A paleta segue o
   // referente medido: o centro é ouro escuro (L 0,17, sat 0,90, quase sem azul),
   // a volta mais brilhante fica em ~0,25 do raio da flor (L 0,30) e a partir daí
   // a luz cai até ~0,20 na borda. Dentro de cada pétala a nervura central clara e
@@ -107,27 +134,32 @@
 
   // normais por diferenças finitas; a normal é sempre virada para fora do eixo,
   // porque uma lâmina fina tem duas faces e a que interessa ao fumo é a de fora
+  const _p = [0, 0, 0], _pu = [0, 0, 0], _mu = [0, 0, 0], _pv = [0, 0, 0], _mv = [0, 0, 0];
+  const _du = [0, 0, 0], _dv = [0, 0, 0], _n = [0, 0, 0], _c = [0, 0, 0];
+
   function addCloudSurface(g, nu, nv, sampler, colorFn, radFn, band) {
     const eps = 0.001;
     for (let i = 0; i < nu; i++) {
-      const u = (i + Math.random()) / nu;
+      const u = (i + rnd()) / nu;
       for (let j = 0; j < nv; j++) {
-        const v = (j + Math.random()) / nv;
-        const p = sampler(u, v);
-        const pu = sampler(c01(u + eps), v);
-        const mu = sampler(c01(u - eps), v);
-        const pv = sampler(u, c01(v + eps));
-        const mv = sampler(u, c01(v - eps));
-        const du = [pu[0] - mu[0], pu[1] - mu[1], pu[2] - mu[2]];
-        const dv = [pv[0] - mv[0], pv[1] - mv[1], pv[2] - mv[2]];
-        let n = normalize3(cross3(du, dv));
-        if (n[0] * p[0] + n[2] * p[2] < 0) n = [-n[0], -n[1], -n[2]];
+        const v = (j + rnd()) / nv;
+        const p = sampler(u, v, _p);
+        const pu = sampler(c01(u + eps), v, _pu);
+        const mu = sampler(c01(u - eps), v, _mu);
+        const pv = sampler(u, c01(v + eps), _pv);
+        const mv = sampler(u, c01(v - eps), _mv);
+        const du = _du;
+        const dv = _dv;
+        du[0] = pu[0] - mu[0]; du[1] = pu[1] - mu[1]; du[2] = pu[2] - mu[2];
+        dv[0] = pv[0] - mv[0]; dv[1] = pv[1] - mv[1]; dv[2] = pv[2] - mv[2];
+        const n = normalize3(cross3(du, dv, _n), _n);
+        if (n[0] * p[0] + n[2] * p[2] < 0) { n[0] = -n[0]; n[1] = -n[1]; n[2] = -n[2]; }
 
-        const c = colorFn(u, v);
+        const c = colorFn(u, v, _c);
         g.pos.push(p[0], p[1], p[2]);
         g.norm.push(n[0], n[1], n[2]);
         g.col.push(clamp(c[0], 0, 1.2), clamp(c[1], 0, 1.2), clamp(c[2], 0, 1.2));
-        g.seed.push(Math.random(), Math.random(), Math.random());
+        g.seed.push(rnd(), rnd(), rnd());
         g.rad.push(radFn(u, v));
         g.band.push(band);
       }
@@ -145,7 +177,7 @@
   function shuffleCloud(g) {
     const n = g.rad.length;
     for (let i = n - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
+      const j = Math.floor(rnd() * (i + 1));
       if (j !== i) {
         swapArr(g.pos, i, j, 3);
         swapArr(g.norm, i, j, 3);
@@ -164,7 +196,7 @@
     const sa = Math.sin(azimuth);
     const ex = Math.sin(lean);
     const ey = Math.cos(lean);
-    return function (u, v) {
+    return function (u, v, out) {
       const phi = v * Math.PI * 2;
       const bulb = Math.exp(-Math.pow((u - 0.94) * 7.0, 2));
       const rad = 0.007 + 0.006 * u + 0.016 * bulb;
@@ -172,13 +204,19 @@
       const radial = ex * along + ey * Math.cos(phi) * rad;
       const vertical = ey * along - ex * Math.cos(phi) * rad;
       const tangential = Math.sin(phi) * rad;
-      return [ca * radial - sa * tangential, vertical, sa * radial + ca * tangential];
+      out[0] = ca * radial - sa * tangential;
+      out[1] = vertical;
+      out[2] = sa * radial + ca * tangential;
+      return out;
     };
   }
 
   const BLADE_AREA = 0.69; // integral do perfil de largura d'u de uma lâmina
 
   function buildCloud() {
+    // a semente é relançada aqui, e não no módulo: assim a silhueta é sempre a
+    // mesma, chame-se buildCloud() uma vez ou dez
+    rnd = mulberry32(CLOUD_SEED);
     const g = newCloud();
     const blade = Object.create(BLADE_OPTS);
 
@@ -248,24 +286,26 @@
       g,
       mioloGrid.nu,
       mioloGrid.nv,
-      function (u, v) {
+      function (u, v, out) {
         const rr = mioloR * Math.sqrt(u);
         const th = Math.asin(Math.min(1, rr / mioloR));
         const phi = v * Math.PI * 2;
         const seed = 0.006 * Math.sin(phi * 9.0) * Math.sin(th * 5.0);
-        return [
-          Math.cos(phi) * (rr + seed),
-          0.205 * Math.cos(th) - 0.015,
-          Math.sin(phi) * (rr + seed),
-        ];
+        out[0] = Math.cos(phi) * (rr + seed);
+        out[1] = 0.205 * Math.cos(th) - 0.015;
+        out[2] = Math.sin(phi) * (rr + seed);
+        return out;
       },
-      function (u, v) {
+      function (u, v, out) {
         // o disco é ouro escuro no meio e acende para o bordo, que é onde está o
         // anel brilhante do referente; nunca leva azul, que é o que lê como tinta.
         // É mesmo escuro porque aqui os pontos se empilham: o acumulado aditivo
         // multiplicaria por três o que aqui se pinta.
         const speck = 0.74 + 0.26 * Math.sin(v * Math.PI * 2 * 11.0) * Math.sin(u * Math.PI * 4.0);
-        return [(0.15 + 0.16 * u) * speck, (0.095 + 0.085 * u) * speck, 0.018 + 0.014 * u];
+        out[0] = (0.15 + 0.16 * u) * speck;
+        out[1] = (0.095 + 0.085 * u) * speck;
+        out[2] = 0.018 + 0.014 * u;
+        return out;
       },
       function () { return 0.05; },
       1
@@ -284,9 +324,12 @@
         gr.nu,
         gr.nv,
         stamenSampler(az, lean, len),
-        function (u) {
+        function (u, v, out) {
           const head = Math.pow(c01((u - 0.55) / 0.45), 2);
-          return [0.35 + 0.40 * head, 0.28 - 0.08 * head, 0.05 - 0.03 * head];
+          out[0] = 0.35 + 0.40 * head;
+          out[1] = 0.28 - 0.08 * head;
+          out[2] = 0.05 - 0.03 * head;
+          return out;
         },
         function (u) { return 0.02 + u * 0.10; },
         0.85
@@ -299,24 +342,31 @@
       g,
       grStem.nu,
       grStem.nv,
-      function (u, v) {
+      function (u, v, out) {
         const phi = v * Math.PI * 2;
         const y = -1.72 + u * 1.66;
         const rr = 0.036 - 0.016 * u;
         // o pé vem para a câmara: sem isto o caule foge para trás e desaparece
         const zc = 0.30 * (1 - u) * (1 - u);
         const xc = Math.sin(u * 2.2) * 0.045;
-        return [Math.cos(phi) * rr + xc, y, Math.sin(phi) * rr + zc];
+        out[0] = Math.cos(phi) * rr + xc;
+        out[1] = y;
+        out[2] = Math.sin(phi) * rr + zc;
+        return out;
       },
-      function (u, v) {
+      function (u, v, out) {
         const lit = 0.55 + 0.45 * Math.cos(v * Math.PI * 2);
-        return [0.10 * lit, (0.40 + 0.14 * u) * lit, 0.09 * lit];
+        out[0] = 0.10 * lit;
+        out[1] = (0.40 + 0.14 * u) * lit;
+        out[2] = 0.09 * lit;
+        return out;
       },
       function () { return 0.0; },
       0
     );
 
-    // folhas presas ao caule; zoff acompanha a curva do caule à altura de cada uma
+    // folhas: quase deitadas (tilt pequeno) e com curl negativo, porque uma folha
+    // caía dobra para baixo, ao contrário das pétalas, que se curvam para dentro
     LEAVES.forEach(function (L) {
       blade.radius = 0.04;
       blade.length = L.length;
@@ -388,20 +438,26 @@
     eyeZ: 3.5, // distância de referência: os 3.2..4.6 da névoa nos shaders são medidos aqui
     reach: 0.96, // meio-comprimento da corola aberta (pétala 0,932 × escala 0,82 + abertura dos graves)
     fill: 0.94, // fração da meia-largura visível que a flor pode ocupar
-    lift: 0.20, // em retrato, fração da meia-altura visível que a flor sobe para livre do painel
+    lift: 0.20, // em retrato, fração da meia-altura visível que a flor sobe para ficar livre do painel
   };
 
   const eye = [0, 0, FRAME.eyeZ];
   let camLift = 0;
 
-  let proj = identity();
-  let view = lookAt(eye, [0, 0, 0], [0, 1, 0]);
+  const proj = new Float32Array(16);
+  const view = new Float32Array(16);
+  // as cinco matrizes do modelo da flor vivem em buffers fixos: ver MATH abaixo
+  const model = new Float32Array(16);
+  const rot = new Float32Array(16);
+  const mScratch = new Float32Array(16);
+  const normalMat = new Float32Array(9);
   let pointMaxPx = 64; // máximo do driver para gl_PointSize
   let pointPx = 1; // pixels por unidade de mundo à profundidade 1
 
   let quality = 1; // cai quando os fps não chegam
   let fpsAvg = 60;
   let lastTune = 0;
+  let buildMs = 0; // milissegundos de tela em branco gastos a construir a nuvem
 
   const state = { audio: 0, bass: 0, mid: 0, treble: 0, pulse: 0, pulse2: 0, timbre: 0.5, tiltX: 0, tiltY: 0, cloud: 1 };
 
@@ -423,7 +479,7 @@
     return s;
   }
 
-  function buildProgram(vsSrc, fsSrc, attribs, uniforms) {
+  function buildProgram(vsSrc, fsSrc, attribs, uniforms, label) {
     const vs = compileShader(gl.VERTEX_SHADER, vsSrc);
     const fs = compileShader(gl.FRAGMENT_SHADER, fsSrc);
     if (!vs || !fs) return null;
@@ -443,7 +499,40 @@
     const prog = { program: p, attrib: {}, uniform: {} };
     attribs.forEach((n) => { prog.attrib[n] = gl.getAttribLocation(p, n); });
     uniforms.forEach((n) => { prog.uniform[n] = gl.getUniformLocation(p, n); });
+    checkProgram(prog, label, attribs, uniforms);
     return prog;
+  }
+
+  /* Um nome de uniforme trocado é o bug mais silencioso deste renderizador:
+     getUniformLocation devolve null e gl.uniform1f(null, v) não desenha nada, não
+     dá erro e não dá aviso. Os dois sentidos do erro são verificados uma vez, no
+     arranque: o que a lista de shaders.js declara e o shader não tem, e o que o
+     shader lê e a lista esquece. scripts/check.mjs faz o mesmo cruzamento sobre o
+     texto GLSL, sem precisar de navegador. */
+  function checkProgram(prog, label, attribs, uniforms) {
+    const nU = gl.getProgramParameter(prog.program, gl.ACTIVE_UNIFORMS);
+    const usedU = [];
+    for (let i = 0; i < nU; i++) usedU.push(gl.getActiveUniform(prog.program, i).name.replace(/\[0]$/, ''));
+    const nA = gl.getProgramParameter(prog.program, gl.ACTIVE_ATTRIBUTES);
+    const usedA = [];
+    for (let i = 0; i < nA; i++) usedA.push(gl.getActiveAttrib(prog.program, i).name);
+
+    for (const n of uniforms) {
+      if (prog.uniform[n] == null) {
+        console.warn(`[v1su4rt] ${label}: a lista pede '${n}' mas o programa não o tem (nome errado, ou o compilador deitou-o fora)`);
+      } else if (usedU.indexOf(n) < 0) {
+        console.warn(`[v1su4rt] ${label}: '${n}' tem localização mas o shader nunca o lê`);
+      }
+    }
+    for (const n of usedU) {
+      if (uniforms.indexOf(n) < 0) console.warn(`[v1su4rt] ${label}: o shader lê '${n}' e a lista de shaders.js não o envia`);
+    }
+    for (const n of attribs) {
+      if (prog.attrib[n] < 0) console.warn(`[v1su4rt] ${label}: a lista envia o atributo '${n}' mas o programa não o tem`);
+    }
+    for (const n of usedA) {
+      if (attribs.indexOf(n) < 0) console.warn(`[v1su4rt] ${label}: o shader lê o atributo '${n}' e a lista de shaders.js não o envia`);
+    }
   }
 
   function staticBuffer(target, data) {
@@ -459,7 +548,15 @@
       return false;
     }
 
-    const opts = { alpha: false, antialias: true, depth: false, stencil: false, powerPreference: 'high-performance' };
+    /* `antialias: false` é deliberado. Não há arestas geométricas para suavizar:
+       o fundo é um único quad que cobre a tela toda, com as arestas fora dela, e a
+       orla de cada ponto já é antiderrame analítico no fragmento (`1 - smoothstep
+       (0.30, 0.50, d)`, ver FRAGMENT_POINTS). O que o MSAA custa é um backbuffer
+       multiamostrado e um resolve por frame — banda que num celular é a que falta.
+       Medido neste desktop a 489×431: 6,90 ms por frame com MSAA e 6,90 ms sem
+       ele, porque a tela estava no teto do vsync e sobrava GPU; ou seja, o ganho
+       aqui não é mensurável e o que se poupou é o celular. */
+    const opts = { alpha: false, antialias: false, depth: false, stencil: false, powerPreference: 'high-performance' };
     try {
       gl = canvas.getContext('webgl', opts) || canvas.getContext('experimental-webgl', opts);
     } catch (e) {
@@ -468,7 +565,7 @@
     }
     if (!gl) return false;
 
-    progBg = buildProgram(VERTEX_BG, FRAGMENT_BG, ['a_pos'], ['u_time', 'u_audio', 'u_bass', 'u_mid', 'u_treble', 'u_pulse', 'u_tilt', 'u_aspect']);
+    progBg = buildProgram(VERTEX_BG, FRAGMENT_BG, ['a_pos'], ['u_time', 'u_audio', 'u_bass', 'u_mid', 'u_treble', 'u_pulse', 'u_tilt', 'u_aspect'], 'fundo');
     progPoints = buildProgram(
       VERTEX_POINTS,
       FRAGMENT_POINTS,
@@ -476,7 +573,8 @@
       [
         'u_proj', 'u_view', 'u_model', 'u_normalMat', 'u_eye', 'u_time', 'u_audio', 'u_bass',
         'u_mid', 'u_treble', 'u_pulse', 'u_pulse2', 'u_timbre', 'u_phase', 'u_cloud', 'u_size', 'u_maxPx',
-      ]
+      ],
+      'nuvem'
     );
     if (!progBg || !progPoints) return false;
 
@@ -491,7 +589,11 @@
     // tudo criado uma única vez: nada de buffers novos por frame
     bgBuffer = staticBuffer(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]));
 
+    // medido: é o tempo de tela em branco antes da primeira flor, e é o que diria
+    // se a construção tinha de passar para um worker
+    const t0 = performance.now();
     const c = buildCloud();
+    buildMs = performance.now() - t0;
     points = {
       pos: staticBuffer(gl.ARRAY_BUFFER, c.pos),
       norm: staticBuffer(gl.ARRAY_BUFFER, c.norm),
@@ -504,7 +606,14 @@
 
     gl.bindBuffer(gl.ARRAY_BUFFER, null);
 
-    resize();
+    relayout();
+    // o ResizeObserver é quem avisa quando a área do canvas muda; os outros três
+    // cobrem o que ele não vê: rotação do aparelho, barra de endereço do celular e
+    // mudança de devicePixelRatio ao passar a janela para outro monitor
+    if (window.ResizeObserver) new ResizeObserver(relayout).observe(canvas);
+    window.addEventListener('resize', relayout);
+    window.addEventListener('orientationchange', relayout);
+    if (window.visualViewport) window.visualViewport.addEventListener('resize', relayout);
     return true;
   }
 
@@ -515,30 +624,37 @@
     return Math.min(window.devicePixelRatio || 1, cap) * quality;
   }
 
-  // O tamanho dos pontos vai em unidades de mundo, por isso a relação entre o
-  // diâmetro do ponto e o intervalo entre pontos não depende da resolução: a
-  // flor lê-se igualmente como nuvem de fumo a 1x ou a 2x, só muda a nitidez.
-  function resize() {
+  /* Geometria lida por evento, não por frame. O canvas é `position: fixed;
+     inset: 0`, por isso só muda com a janela: lê-lo a cada frame era um layout
+     forçado por frame, com a barra do medidor a escrever estilo 20 vezes por
+     segundo em cima. Quem também muda a resolução interna sem mudar a janela é a
+     qualidade, por isso `tuneQuality` volta a chamar esta função. */
+  let lastScale = -1;
+
+  function relayout() {
     const scale = targetScale();
     const w = Math.max(1, Math.round(canvas.clientWidth * scale));
     const h = Math.max(1, Math.round(canvas.clientHeight * scale));
-    if (canvas.width !== w || canvas.height !== h) {
-      canvas.width = w;
-      canvas.height = h;
-      const aspect = w / h;
-      const tan = Math.tan((FRAME.fovDeg * Math.PI) / 360);
-      // meia-largura visível à profundidade eyeZ vale tan*eyeZ*aspect; em retrato
-      // (390×844 → aspect 0,46) dá 0,669 com eyeZ 3,5 e a flor reach 0,96 perdia
-      // ~30% das pontas. Recua-se a câmara só quando é preciso: a 16:9 horizontal
-      // e no quadrado o enquadramento fica exatamente no de origem.
-      eye[2] = Math.max(FRAME.eyeZ, FRAME.reach / (FRAME.fill * tan * aspect));
-      // o painel de vidro tapa a banda de baixo em retrato: a flor sobe, centrada
-      // na zona livre em vez de centrada na tela
-      camLift = aspect < 1 ? tan * eye[2] * FRAME.lift : 0;
-      proj = perspective(FRAME.fovDeg, aspect, 0.1, 100);
-      view = lookAt(eye, [0, 0, 0], [0, 1, 0]);
-    }
-    // proj[5] é cot(fov/2): converte unidades de mundo em pixels à profundidade 1
+    if (w === canvas.width && h === canvas.height && scale === lastScale) return;
+    lastScale = scale;
+    canvas.width = w;
+    canvas.height = h;
+    const aspect = w / h;
+    const tan = Math.tan((FRAME.fovDeg * Math.PI) / 360);
+    // meia-largura visível à profundidade eyeZ vale tan*eyeZ*aspect; em retrato
+    // (390×844 → aspect 0,46) dá 0,669 com eyeZ 3,5 e a flor de reach 0,96 perdia
+    // ~30% das pontas. Recua-se a câmara só quando é preciso: a 16:9 horizontal
+    // e no quadrado o enquadramento fica exatamente o de origem.
+    eye[2] = Math.max(FRAME.eyeZ, FRAME.reach / (FRAME.fill * tan * aspect));
+    // o painel de vidro tapa a banda de baixo em retrato: a flor sobe, centrada
+    // na zona livre em vez de centrada na tela
+    camLift = aspect < 1 ? tan * eye[2] * FRAME.lift : 0;
+    perspective(proj, FRAME.fovDeg, aspect, 0.1, 100);
+    lookAt(view, eye, [0, 0, 0], [0, 1, 0]);
+    // proj[5] é cot(fov/2): converte unidades de mundo em pixels à profundidade 1.
+    // O tamanho dos pontos vai em unidades de mundo, por isso a relação entre o
+    // diâmetro do ponto e o intervalo entre pontos não depende da resolução: a
+    // flor lê-se igualmente como nuvem de fumo a 1x ou a 2x, só muda a nitidez.
     pointPx = (canvas.height / 2) * proj[5];
     gl.viewport(0, 0, canvas.width, canvas.height);
   }
@@ -550,8 +666,13 @@
     lastTune = now;
     // a flor são dezenas de milhares de vértices e área pintada: quando faltam
     // fps corta-se primeiro na resolução, depois na quantidade de pontos
+    const before = quality;
     if (fpsAvg < 40 && quality > 0.45) quality = Math.max(0.45, quality - 0.1);
     else if (fpsAvg > 55 && quality < 1) quality = Math.min(1, quality + 0.05);
+    // a qualidade entra no targetScale(), por isso mexe na resolução interna sem
+    // que a janela tenha mudado: é aqui, e não no frame, que se vai buscar o novo
+    // tamanho
+    if (quality !== before) relayout();
   }
 
   /* ========== RENDER ========== */
@@ -615,19 +736,19 @@
     // 3/4: a base de ~1.02 rad (~58°) faz a câmara olhar para dentro da corola,
     // por isso o giroscópio e o mouse também inclinam a flor, não só o fundo
     const s = 0.82 * (0.98 + state.audio * 0.04 + state.pulse * 0.02);
-    let model = mat4Scale(s, s, s);
-    model = multiplyMatrices(mat4RotateY(spin), model);
-    model = multiplyMatrices(mat4RotateZ(tx * 0.25), model);
+    mat4Scale(model, s, s, s);
+    mat4RotateY(rot, spin); mulLeft(model, rot);
+    mat4RotateZ(rot, tx * 0.25); mulLeft(model, rot);
     // os graves fazem a flor inclinar-se para a frente
-    model = multiplyMatrices(mat4RotateX(1.02 + ty * 0.25 - state.bass * 0.10), model);
-    model = multiplyMatrices(mat4Translate(0, 0.04 + camLift, 0), model);
+    mat4RotateX(rot, 1.02 + ty * 0.25 - state.bass * 0.10); mulLeft(model, rot);
+    mat4Translate(rot, 0, 0.04 + camLift, 0); mulLeft(model, rot);
 
     const p = progPoints;
     gl.useProgram(p.program);
     gl.uniformMatrix4fv(p.uniform.u_proj, false, proj);
     gl.uniformMatrix4fv(p.uniform.u_view, false, view);
     gl.uniformMatrix4fv(p.uniform.u_model, false, model);
-    gl.uniformMatrix3fv(p.uniform.u_normalMat, false, mat3FromMat4(model));
+    gl.uniformMatrix3fv(p.uniform.u_normalMat, false, mat3FromMat4(normalMat, model));
     gl.uniform3f(p.uniform.u_eye, eye[0], eye[1], eye[2]);
     gl.uniform1f(p.uniform.u_time, time);
     gl.uniform1f(p.uniform.u_audio, state.audio);
@@ -664,7 +785,6 @@
     time += dt * timeScale;
     phase = (time / LIFE) % 1;
     tuneQuality(dt);
-    resize();
 
     // só a cor: nada nesta cena escreve profundidade, por isso não há depth buffer
     gl.clear(gl.COLOR_BUFFER_BIT);
@@ -672,81 +792,109 @@
     drawFlower(dt);
   }
 
-  /* ========== MATH (column-major) ========== */
+  /* ========== MATH (column-major) ==========
 
-  function identity() {
-    return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
-  }
+     Tudo o que corre por frame escreve sobre matrizes pré-alocadas e recebe a
+     saída como primeiro argumento. As versões antigas devolviam `new Array(16)` a
+     cada chamada — cinco rotações, cinco produtos e a matriz de normais por frame,
+     ~660 alocações por segundo a 60 fps, todas deitadas fora no frame seguinte.
+     `multiplyMatrices` não aceita que a saída se sobreponha a uma das entradas. */
 
-  function perspective(fov, aspect, near, far) {
+  function perspective(out, fov, aspect, near, far) {
     const f = 1 / Math.tan((fov * Math.PI) / 360);
     const nf = 1 / (near - far);
-    return [
-      f / aspect, 0, 0, 0,
-      0, f, 0, 0,
-      0, 0, (far + near) * nf, -1,
-      0, 0, 2 * far * near * nf, 0,
-    ];
+    out[0] = f / aspect; out[1] = 0; out[2] = 0; out[3] = 0;
+    out[4] = 0; out[5] = f; out[6] = 0; out[7] = 0;
+    out[8] = 0; out[9] = 0; out[10] = (far + near) * nf; out[11] = -1;
+    out[12] = 0; out[13] = 0; out[14] = 2 * far * near * nf; out[15] = 0;
+    return out;
   }
 
   // Convenção OpenGL: o que está à frente da câmara tem z negativo.
-  function lookAt(e, center, up) {
+  function lookAt(out, e, center, up) {
     const f = normalize3([center[0] - e[0], center[1] - e[1], center[2] - e[2]]);
     const s = normalize3(cross3(f, up));
     const u = cross3(s, f);
-    return [
-      s[0], u[0], -f[0], 0,
-      s[1], u[1], -f[1], 0,
-      s[2], u[2], -f[2], 0,
-      -dot3(s, e), -dot3(u, e), dot3(f, e), 1,
-    ];
+    out[0] = s[0]; out[1] = u[0]; out[2] = -f[0]; out[3] = 0;
+    out[4] = s[1]; out[5] = u[1]; out[6] = -f[1]; out[7] = 0;
+    out[8] = s[2]; out[9] = u[2]; out[10] = -f[2]; out[11] = 0;
+    out[12] = -dot3(s, e); out[13] = -dot3(u, e); out[14] = dot3(f, e); out[15] = 1;
+    return out;
   }
 
-  function cross3(a, b) {
-    return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  function cross3(a, b, out) {
+    const o = out || [0, 0, 0];
+    o[0] = a[1] * b[2] - a[2] * b[1];
+    o[1] = a[2] * b[0] - a[0] * b[2];
+    o[2] = a[0] * b[1] - a[1] * b[0];
+    return o;
   }
 
   function dot3(a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
 
-  function normalize3(v) {
+  function normalize3(v, out) {
+    const o = out || [0, 0, 0];
     const len = Math.sqrt(dot3(v, v)) || 1;
-    return [v[0] / len, v[1] / len, v[2] / len];
+    o[0] = v[0] / len; o[1] = v[1] / len; o[2] = v[2] / len;
+    return o;
   }
 
-  function mat4Translate(x, y, z) {
-    return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, y, z, 1];
+  function mat4Translate(out, x, y, z) {
+    out[0] = 1; out[1] = 0; out[2] = 0; out[3] = 0;
+    out[4] = 0; out[5] = 1; out[6] = 0; out[7] = 0;
+    out[8] = 0; out[9] = 0; out[10] = 1; out[11] = 0;
+    out[12] = x; out[13] = y; out[14] = z; out[15] = 1;
+    return out;
   }
 
-  function mat4RotateX(ang) {
+  function mat4RotateX(out, ang) {
     const c = Math.cos(ang);
     const s = Math.sin(ang);
-    return [1, 0, 0, 0, 0, c, s, 0, 0, -s, c, 0, 0, 0, 0, 1];
+    out[0] = 1; out[1] = 0; out[2] = 0; out[3] = 0;
+    out[4] = 0; out[5] = c; out[6] = s; out[7] = 0;
+    out[8] = 0; out[9] = -s; out[10] = c; out[11] = 0;
+    out[12] = 0; out[13] = 0; out[14] = 0; out[15] = 1;
+    return out;
   }
 
-  function mat4RotateY(ang) {
+  function mat4RotateY(out, ang) {
     const c = Math.cos(ang);
     const s = Math.sin(ang);
-    return [c, 0, -s, 0, 0, 1, 0, 0, s, 0, c, 0, 0, 0, 0, 1];
+    out[0] = c; out[1] = 0; out[2] = -s; out[3] = 0;
+    out[4] = 0; out[5] = 1; out[6] = 0; out[7] = 0;
+    out[8] = s; out[9] = 0; out[10] = c; out[11] = 0;
+    out[12] = 0; out[13] = 0; out[14] = 0; out[15] = 1;
+    return out;
   }
 
-  function mat4RotateZ(ang) {
+  function mat4RotateZ(out, ang) {
     const c = Math.cos(ang);
     const s = Math.sin(ang);
-    return [c, s, 0, 0, -s, c, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+    out[0] = c; out[1] = s; out[2] = 0; out[3] = 0;
+    out[4] = -s; out[5] = c; out[6] = 0; out[7] = 0;
+    out[8] = 0; out[9] = 0; out[10] = 1; out[11] = 0;
+    out[12] = 0; out[13] = 0; out[14] = 0; out[15] = 1;
+    return out;
   }
 
-  function mat4Scale(x, y, z) {
-    return [x, 0, 0, 0, 0, y, 0, 0, 0, 0, z, 0, 0, 0, 0, 1];
+  function mat4Scale(out, x, y, z) {
+    out[0] = x; out[1] = 0; out[2] = 0; out[3] = 0;
+    out[4] = 0; out[5] = y; out[6] = 0; out[7] = 0;
+    out[8] = 0; out[9] = 0; out[10] = z; out[11] = 0;
+    out[12] = 0; out[13] = 0; out[14] = 0; out[15] = 1;
+    return out;
   }
 
-  // GLSL ES 1.00 não constrói mat3 a partir de mat4: a extracção é feita aqui.
+  // GLSL ES 1.00 não constrói mat3 a partir de mat4: a extração é feita aqui.
   // A escala é uniforme, por isso basta a parte de rotação.
-  function mat3FromMat4(m) {
-    return [m[0], m[1], m[2], m[4], m[5], m[6], m[8], m[9], m[10]];
+  function mat3FromMat4(out, m) {
+    out[0] = m[0]; out[1] = m[1]; out[2] = m[2];
+    out[3] = m[4]; out[4] = m[5]; out[5] = m[6];
+    out[6] = m[8]; out[7] = m[9]; out[8] = m[10];
+    return out;
   }
 
-  function multiplyMatrices(a, b) {
-    const out = new Array(16);
+  function multiplyMatrices(out, a, b) {
     for (let c = 0; c < 4; c++) {
       for (let r = 0; r < 4; r++) {
         out[c * 4 + r] =
@@ -754,6 +902,15 @@
       }
     }
     return out;
+  }
+
+  // m = a * m, que é a ordem em que o modelo da flor se compõe (escala, rotações,
+  // e por último a translação do enquadramento). O produto passa por um rascunho
+  // porque as funções acima não aceitam uma saída sobreposta às entradas.
+  function mulLeft(m, a) {
+    multiplyMatrices(mScratch, a, m);
+    m.set(mScratch);
+    return m;
   }
 
   /* ========== ENTRADA DE DADOS ========== */
@@ -798,6 +955,9 @@
     // e dá um quarto mais de tamanho a cada ponto
     setCloudIntensity: function (v) { state.cloud = clamp(Number(v) || 0, 0, 2); },
     cloudIntensity: function () { return state.cloud; },
+    // quanto custou desenhar a flor em CPU, em ms: é o número a olhar antes de se
+    // decidir se a construção precisa de um worker
+    buildTime: function () { return buildMs; },
     stop: function () {
       if (raf) cancelAnimationFrame(raf);
       raf = 0;

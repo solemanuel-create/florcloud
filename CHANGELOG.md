@@ -4,6 +4,79 @@ Formato seguido: uma entrada por mudança de visual ou de estrutura, com o `CACH
 correspondente do `service-worker.js` — é ele que diz ao browser para deitar fora a
 versão guardada.
 
+## 2026-10-17 — o andaime: conferência estática, menos layout por frame, nuvem com semente (`v1su4rt-v16`)
+
+Nada aqui muda a flor. É o lote que decide se o resto do projeto é fácil de mexer, e o
+que se mediu em vez de se intuir.
+
+- **`scripts/check.mjs`** — conferência estática sem dependências: cruza o texto GLSL dos
+  quatro shaders com as listas de `buildProgram()`, reclama nos quatro sentidos (nome na
+  lista que o shader não tem, nome que o shader lê e a lista não envia, `varying` com
+  precisões diferentes entre estágios, uniforme listado que o renderizador nunca escreve),
+  passa os cinco `.js` por um parser e confere a ordem dos scripts e o `APP_FILES`.
+  Justificativa: `getUniformLocation` devolve `null` para um nome errado e
+  `gl.uniform1f(null, v)` não faz **nada** em silêncio — o visual fica morto e a consola
+  limpa. Provado ao contrário: um `u_timbreX` injetado produziu exatamente 3 erros
+  apontados e nada mais. O `checkProgram()` do arranque faz a mesma varredura em runtime,
+  com `ACTIVE_UNIFORMS`.
+- **Geometria lida por evento, não por frame.** `resize()` saía do loop a cada frame e
+  lia `canvas.clientWidth` — um layout forçado por frame, com a barra do medidor a
+  escrever estilo 20 vezes por segundo em cima. Agora há `ResizeObserver` (com
+  `resize`/`orientationchange`/`visualViewport` por cima) e `relayout()` tem uma guarda:
+  não toca em `canvas.width` se o tamanho e a escala são os mesmos, porque mudar a
+  resolução interna é a única coisa que muda o buffer sem mudar a janela — e é
+  `tuneQuality()` que a chama. Medido por interceptação dos leitores de geometria:
+  **nenhuma** leitura dentro do loop de desenho.
+- **Matrizes em `Float32Array` uma vez só.** `proj`, `view`, `model`, `rot`, um rascunho e
+  a matriz de normais saem do frame: eram ~660 alocações por segundo deitadas fora logo a
+  seguir. `multiplyMatrices` não aceita saída sobreposta às entradas, por isso a
+  composição passou a ser `mulLeft(model, rot)` — e é isso que mantém `model = T·Rx·Rz·Ry·S`
+  legível.
+- **A nuvem é sorteada com semente** (`mulberry32`, `CLOUD_SEED`). Com `Math.random()` cada
+  recarga dava outra distribuição de pontos: a silhueta mudava, e comparar duas capturas
+  para julgar um ajuste de luz era impossível. Agora o frame de ontem é o frame de hoje.
+  Provado em Node: duas construções seguidas de `buildCloud()` dão 46.892 pontos e o mesmo
+  checksum sobre posição, normal e semente (`952763752`).
+- **Sem MSAA** (`antialias: false`). Não há arestas geométricas para suavizar: o fundo é um
+  único quad com as arestas fora da tela e a orla de cada ponto já é antiderrame analítico
+  no fragmento. O custo era um backbuffer multiamostrado e um resolve por frame — banda,
+  que é o que falta no celular. Medido a 489×431: **6,90 ms** por frame com MSAA e **6,90 ms**
+  sem ele, porque a tela estava no teto do vsync e sobrava GPU; ou seja, localmente não se
+  vê ganho nenhum, e o que se poupou é o aparelho que não está aqui. Captura antes/depois
+  sem diferença visível.
+- **`buildTime()`** na API pública: os milissegundos de CPU gastos a sortear os 46.892
+  pontos, que é o tempo de tela vazia antes da primeira flor. Medido **68–102 ms** num
+  desktop. A otimização que lhe tinha sido feita (rascunhos partilhados no construtor, em
+  vez de um array novo por ponto) deu **neutra** em A/B no Node: v15 mediana 321 ms, v16
+  368 ms, com sobreposição das distribuições. O motivo é o que se mediu à parte:
+  `new Float32Array(Array)` custa 0,25 ms e cada `push` 0,73 ms por 141 mil elementos,
+  enquanto a matemática são ~1,4 M chamadas transcendentais. **Portanto não se justifica
+  um worker** com esta evidência — e é por isso que o `buildTime()` existe: é este número
+  no celular real que diria o contrário.
+- **Comentários que mentiam foram desfeitos.** O bloco que explicava o multiplicador de luz
+  dizia que `hatFlick` preservava a média — e o termo `0.95 * smoothstep(0.42, 0.88, r)`
+  que o acompanha **não** preserva, é de propósito, e é o mais caro do orçamento. Agora está
+  dito o que cada um é, incluindo o que se corta primeiro se a flor começar a estourar.
+  Higiene de idioma: `telemóvel`→`celular`, `utilizador`→`usuário`, `ecrã`→`tela`,
+  `pinar`→`encostar no teto`, `45º`→`45°`, e o texto do `FRAGMENT_BG` que tinha perdido os
+  acentos.
+
+Ficou de fora, por medida e não por preguiça:
+
+- **Cortar o desenho com a aba escondida** (`document.hidden`). Não se acrescenta: o
+  navegador já não chama `requestAnimationFrame` de um documento invisível, e o `dt` do
+  frame já vai limitado a `[0,001, 0,1]` s, por isso voltar de 60 segundos escondido não
+  dá picada nenhuma na física nem no `fpsAvg`. Tentou-se medir e não se pôde: abrir aba
+  sem gesto do usuário é bloqueado pelo navegador, e a primeira medição que parecia dizer
+  algo estava **inválida** (a aba nunca ficou oculta).
+- **E4/E5/E11 no celular** continuam por medir neste hardware; `antialias`, worker e
+  precisão só se decidem com o número do aparelho na mão.
+
+- `README.md`: o mapa do projeto ganhou `scripts/check.mjs`, a forma de o correr e uma
+  linha de "primeiro frame demora" com `buildTime()`. `TESTES.md`: conferência estática e
+  limpeza de cache no roteiro de depois de cada mudança.
+- `CACHE_NAME`: `v1su4rt-v15` → `v1su4rt-v16`.
+
 ## 2026-10-17 — sete canais de escuta, contratempo, timbre, toque (`v1su4rt-v15`)
 
 Saem sete valores por frame do microfone e do giroscópio: nível, grave, médio, agudo,

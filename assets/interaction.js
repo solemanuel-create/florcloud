@@ -91,7 +91,7 @@
 
     // re-centragem do giroscópio (em 1/s): a pose em que o aparelho está passa
     // lentamente a ser o novo neutro. Com 0 a base fica presa à pose do instante em
-    // que a permissão foi concedida, e quem segurar o telemóvel a 45º vê a flor
+    // que a permissão foi concedida, e quem segurar o celular a 45° vê a flor
     // pendurada num lado para sempre. orientDeadband (graus) é o que um gesto tem de
     // ultrapassar para contar: é o que separa manter o aparelho inclinado de apontar.
     orientRecenter: 0.1,
@@ -105,10 +105,10 @@
     knee: 0.75,
   };
 
-  /* Ombro suave: até `knee` é ganho puro; depois aproxima-se de 1 sem a pinar.
-     Com clamp simples, a sensibilidade de fábrica 1,5 pinava tudo o que passasse
-     de 0,667 — em música alta as bandas ficavam coladas no topo, a flor parava de
-     responder, e a metade de cima do slider não fazia absolutamente nada. */
+  /* Ombro suave: até `knee` é ganho puro; depois aproxima-se de 1 sem encostar no
+     teto. Com clamp simples, a sensibilidade de fábrica 1,5 saturava tudo o que
+     passasse de 0,667 — em música alta as bandas ficavam coladas no topo, a flor
+     parava de responder, e a metade de cima do slider não fazia absolutamente nada. */
   function softKnee(x, knee) {
     if (x <= knee) return x;
     const top = 1 - knee;
@@ -124,7 +124,7 @@
       this.tilt = { x: 0, y: 0 };
       // toda a memória do ouvido vem de _clearSession(), chamada aqui e em stop():
       // declará-la nos dois sítios é como um campo novo ficar com lixo de uma sala
-      // anterior quando o utilizador desliga e volta a ligar o microfone
+      // anterior quando o usuário desliga e volta a ligar o microfone
       this._clearSession();
       this._onOrient = this._onOrient.bind(this);
 
@@ -463,7 +463,7 @@
        Tudo limitado a 0..1: os coeficientes dos shaders foram desenhados para
        esse intervalo. O topo é feito com ombro suave em vez de clamp, para que o
        curso inteiro do slider sirva para alguma coisa e a música alta continue a
-       ter dinâmica em vez de pinar. */
+       ter dinâmica em vez de encostar no teto. */
     read() {
       const g = this.audioSens;
       const c = (v) => softKnee(v * g, TUNE.knee);

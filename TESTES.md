@@ -77,10 +77,14 @@ Em DevTools → modo dispositivo (ou redimensionando a janela):
 - [ ] Com "reduzir movimento" ligado no sistema, a animação fica mais lenta **e o flash das batidas fica visivelmente mais fraco** (não um estroboscópio a tela cheia). No console: `v1su4rtShaders.setFlashScale(0)` deve apagar por completo o flash de batida e de toque, sem apagar o resto.
 - [ ] `prefers-reduced-motion` alternado com a página aberta (mudar a preferência do SO) aplica-se sem recarregar.
 - [ ] Em aparelho fraco, a imagem perde definição em vez de travar.
+- [ ] `v1su4rtShaders.buildTime()` na consola: é o tempo de CPU a construir a nuvem, antes do primeiro desenho. Num desktop fica em ~70–100 ms; se num celular passar dos ~400 ms, é aí que se decide o worker.
+- [ ] O canvas não pede MSAA (`antialias: false`): as orlas dos pontos são suavizadas no fragmento, por isso não deve haver serrilhado visível em nenhum tamanho de tela.
 - [ ] `privacy.html` abre e o link **Voltar** funciona.
 
 ## 6. Depois de cada mudança
 
 - [ ] Aumentar `CACHE_NAME` em `service-worker.js`.
+- [ ] `node scripts/check.mjs` — depois de qualquer mexida nos shaders ou nas listas de `buildProgram()`.
+- [ ] Desregistar o service worker e limpar as caches antes de reabrir a página no navegador de testes: sem isso fica a versão velha e a conclusão não vale.
 - [ ] Hard reload (Ctrl+Shift+R) no desktop; no celular, fechar e reabrir o app.
 - [ ] `git status` antes de commitar.

@@ -58,9 +58,9 @@ void main() {
   // desenhado — é ele que manda no número de anéis.
   float r = length((v_uv - center) * vec2(u_aspect, 1.0));
 
-  // O fundo tem de ficar abaixo de L 0,02 quase em quase toda a tela: a nuvem de
-  // pontos e desenhada em blending aditivo e nao ha forma de ler fumaca luminosa
-  // sobre um palco ja aceso. Os valores antigos davam L 0,06 nos cantos.
+  // O fundo tem de ficar abaixo de L 0,02 quase em toda a tela: a nuvem de pontos
+  // é desenhada em blending aditivo e não há forma de ler fumaça luminosa sobre um
+  // palco já aceso. Os valores antigos davam L 0,06 nos cantos.
   vec3 col = mix(
     vec3(0.010, 0.008, 0.022),
     vec3(0.014, 0.010, 0.028),
@@ -211,8 +211,8 @@ void main() {
   // 1,5) a flor só pode ir a ~1,8× o brilho do silêncio. Passado isso o acumulado
   // aditivo queima o frame inteiro e a corola deixa de se ver como flor.
   vec3 col = a_col * (0.02 + diff * 2.30);
-  // TRANSPARÊNCIA: a luz que atravessa a pétala fina acende-a por detrás, e é esta
-  // term que faz as orlas lerem como película atravessada e não como mancha opaca
+  // TRANSPARÊNCIA: a luz que atravessa a pétala fina acende-a por detrás, e é este
+  // termo que faz as orlas lerem como película atravessada e não como mancha opaca
   col += a_col * trans * (0.65 + band * 0.75);
   // realce de orla: quente e fraco, porque magenta somado em três camadas de
   // pontos lê-se como tinta azulada e lava o vermelho do referente. Fraco de
@@ -224,13 +224,19 @@ void main() {
   col += vec3(0.50, 0.26, 0.10) * u_pulse * (0.30 + 0.50 * r);
   // o fumo já desfeito aclara e perde saturação, como a fumaça apanhada pela luz
   col = mix(col, vec3(0.86, 0.52, 0.30), frag * age * 0.40);
-  // o último termo acende as pontas: na nuvem, a borda da corola é uma só camada de
-  // pontos e precisa de mais luz por ponto para ler ao mesmo nível do miolo
-  // orla que cintila com os agudos, sem somar luz: a média deste termo sobre os
-  // seeds é 1,0 (o seno de uma fase bem espalhada anula-se), por isso as pontas
-  // tremem com o prato enquanto o orçamento de luz do frame fica igual.
-  // Amplitude no máximo 0,80 (0,45 dos agudos + 0,35 do contratempo): o fator vai de
-  // 0,20 a 1,80, nunca a negativo, e a média sobre os seeds continua 1,0.
+  /* O multiplicador final é a luz por ponto, e cada termo é dito pelo que é:
+     - 0,62 é o repouso; u_audio*0,25 e band*0,15 são o volume e a banda.
+     - spark cintila no miolo (peso 1-r): a média sobre os seeds é 0,55 exata, por
+       isso redistribui luz, não soma.
+     - hatFlick faz o mesmo nas orlas: a média sobre os seeds é 1,0, porque o seno de
+       uma fase bem espalhada se anula. As pontas tremem com o prato e o frame não
+       ganha um watt. A amplitude vai no máximo a 0,80 (0,45 dos agudos + 0,35 do
+       contratempo), por isso o fator fica entre 0,20 e 1,80 e nunca a negativo.
+     - O 0,95 * smoothstep(0.42, 0.88, r) que o acompanha NÃO é médio-preservante, e
+       é de propósito: na nuvem a borda da corola é uma só camada de pontos e precisa
+       de mais luz por ponto (~+0,57 de mediana na borda) para ler ao mesmo nível do
+       miolo, onde as cinco voltas se empilham. É o termo mais caro do orçamento de
+       luz e o primeiro a baixar se a flor começar a estourar em branco. */
   float hatFlick = 1.0 + (u_treble * 0.45 + u_pulse2 * 0.35) * sin(u_time * (3.0 + u_treble * 7.0) + a_seed.z * 24.0);
   col *= 0.62 + u_audio * 0.25 + band * 0.15 + (0.16 + 0.15 * u_treble) * spark * (1.0 - r) + 0.95 * smoothstep(0.42, 0.88, r) * hatFlick;
 
@@ -247,8 +253,8 @@ void main() {
   float px = (0.0285 + 0.010 * frag * age + 0.006 * a_seed.z) * (0.82 + 0.40 * r) * u_size / depth;
   gl_PointSize = clamp(px * (0.75 + 0.25 * u_cloud), 1.0, u_maxPx);
 
-  // envelope com pico em age 0,238 e energia conservada ao dividir por ex^2;
-  // a face-on term faz a pétala virada a quem vê ser mais opaca que a borda,
+  // envelope com pico em age 0,238 e energia conservada ao dividir por ex^2; o
+  // termo de incidência faz a pétala virada a quem vê ser mais opaca que a borda,
   // que se acumula com as vizinhas até ao brilho de orla
   float e = pow(max(age, 0.002) / 0.238, 0.5) * pow(max(1.0 - age, 0.002) / 0.762, 1.6);
   float alpha = e / (ex * ex);
