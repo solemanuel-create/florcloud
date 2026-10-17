@@ -14,9 +14,17 @@
   const audioOut = $('audio-sens-value');
   const orientOut = $('orient-sens-value');
   const cloudOut = $('cloud-intens-value');
+  const fsBtn = $('fullscreen-toggle');
+  const meterFill = $('meter-fill');
 
   const sensors = new window.V1Interaction();
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+  /* medidor + vigia de sinal: um microfone aberto que não capta nada é o caso
+     mais frequente de "não está a funcionar", e sem aviso fica silencioso */
+  const SILENCE = { levelMax: 0.02, afterSec: 5, recover: 0.05 };
+  let silentFor = 0;
+  let warnedSilence = false;
 
   /* ---------- painel ---------- */
 
@@ -29,6 +37,11 @@
     const on = sensors.active;
     toggle.textContent = on ? 'Desativar interações' : 'Ativar interações';
     toggle.setAttribute('aria-pressed', String(on));
+    // o medidor só existe com o microfone aberto, e o vigia recomeça do zero
+    panel.classList.toggle('has-audio', sensors.audioOn);
+    silentFor = 0;
+    warnedSilence = false;
+    if (!sensors.audioOn) meterFill.style.transform = 'scaleX(0)';
   }
 
   function describe(res, gyro) {
@@ -37,15 +50,23 @@
     if (a === 'insecure') return ['Microfone e giroscópio exigem HTTPS. Abra o endereço que começa com https://.', 'warn'];
     if (a === 'ok' && g === 'ok') return ['Ativo. Fale, toque música ou incline o aparelho.', 'ok'];
     if (a === 'ok') {
-      if (g === 'denied') return ['Microfone ativo. Movimento negado: recarregue a página e permita ao ativar.', 'warn'];
-      return ['Microfone ativo. Sem giroscópio neste aparelho: mova o rato ou arraste no ecrã.', 'ok'];
+      if (g === 'denied') return ['Microfone ativo. Movimento negado: recarregue a página e conceda a permissão ao ativar.', 'warn'];
+      return ['Microfone ativo. Sem giroscópio neste aparelho: mova o mouse ou arraste na tela.', 'ok'];
     }
-    if (a === 'denied') return ['Microfone bloqueado. Libere nas permissões do site e ative de novo.', 'warn'];
+    if (a === 'denied') return ['Microfone bloqueado. Libere nas permissões do site e ative novamente.', 'warn'];
     if (a === 'unsupported') return ['Este navegador não dá acesso ao microfone.' + (g === 'ok' ? ' O giroscópio segue ativo.' : ''), 'warn'];
     return ['Não foi possível abrir o microfone. Confira se outro app não está usando e ative de novo.', 'warn'];
   }
 
   let lastRes = null;
+  let lastGyro = null; // estado tardio do giroscópio: sem isto a mensagem regredia para "ok"
+
+  /* volta à mensagem de estado normal; usada pelo vigia quando o som regressa */
+  function normalStatus() {
+    if (!lastRes) return;
+    const [m, k] = describe(lastRes, lastGyro || undefined);
+    setStatus(m, k);
+  }
 
   toggle.addEventListener('click', async () => {
     if (sensors.active) {
@@ -60,6 +81,7 @@
     try {
       res = await sensors.start((state) => {
         // resposta tardia do giroscópio (chega até 1,5 s depois)
+        lastGyro = state;
         if (lastRes) { const [m, k] = describe(lastRes, state); setStatus(m, k); }
         paintButton();
       });
@@ -68,6 +90,7 @@
       res = { audio: 'error', orientation: 'error' };
     }
     lastRes = res;
+    lastGyro = null;
     toggle.disabled = false;
     paintButton();
     const [msg, kind] = describe(res);
@@ -95,7 +118,49 @@
     collapseBtn.setAttribute('aria-label', collapsed ? 'Mostrar controles' : 'Recolher controles');
   });
 
-  /* ---------- ponteiro (rato, toque): substitui o giroscópio quando não existe ---------- */
+  // Celular em retrato: o painel é um cartão que tapa meia tela, por isso abre
+  // recolhido. O medidor vive fora do corpo do painel e continua visível.
+  if (window.innerWidth < 640 && window.innerHeight > window.innerWidth) {
+    panel.classList.add('is-collapsed');
+    collapseBtn.setAttribute('aria-expanded', 'false');
+    collapseBtn.setAttribute('aria-label', 'Mostrar controles');
+  }
+
+  /* ---------- tela cheia ---------- */
+
+  const docEl = document.documentElement;
+  const fsElement = () => document.fullscreenElement || document.webkitFullscreenElement || null;
+
+  function paintFs() {
+    const on = !!fsElement();
+    fsBtn.setAttribute('aria-pressed', String(on));
+    fsBtn.setAttribute('aria-label', on ? 'Sair da tela cheia' : 'Tela cheia');
+  }
+
+  fsBtn.addEventListener('click', async () => {
+    try {
+      if (fsElement()) {
+        const exit = document.exitFullscreen || document.webkitExitFullscreen;
+        await exit.call(document);
+      } else {
+        // o pedido vai para a página toda, não para o canvas: se fosse só o canvas,
+        // o painel ficava de fora e não havia forma de sair nem de mexer na
+        // sensibilidade sem sair da tela cheia
+        const req = docEl.requestFullscreen || docEl.webkitRequestFullscreen;
+        await req.call(docEl, { navigationUI: 'hide' });
+      }
+    } catch (err) {
+      console.warn('[v1su4rt] tela cheia recusada:', err);
+      // no iOS só <video> implementa requestFullscreen; o atalho é instalar como app
+      setStatus('Este navegador não abre páginas em tela cheia. No iPhone: Compartilhar → Adicionar à Tela de Início, e o visual abre sem a barra do Safari.', 'warn');
+      return;
+    }
+    paintFs();
+  });
+  ['fullscreenchange', 'webkitfullscreenchange'].forEach((n) => document.addEventListener(n, paintFs));
+  paintFs();
+
+  /* ---------- ponteiro (mouse, toque): substitui o giroscópio quando não existe ---------- */
 
   const pointer = { x: 0, y: 0 };
   const pointerTarget = { x: 0, y: 0 };
@@ -109,6 +174,30 @@
   const release = (e) => { if (e.pointerType !== 'mouse') { pointerTarget.x = 0; pointerTarget.y = 0; } };
   canvas.addEventListener('pointerup', release);
   canvas.addEventListener('pointercancel', release);
+
+  /* ---------- medidor e vigia de sinal ---------- */
+
+  // 20 Hz chega para se ver o ataque das batidas e evita reescrever o estilo da
+  // barra em cada frame
+  let meterAt = 0;
+  function paintMeter(level) {
+    const now = performance.now();
+    if (now - meterAt < 50) return;
+    meterAt = now;
+    meterFill.style.transform = `scaleX(${Math.min(1, level).toFixed(3)})`;
+  }
+
+  function watchSignal(level, dt) {
+    if (!sensors.audioOn) return;
+    silentFor = level < SILENCE.levelMax ? silentFor + dt : 0;
+    if (silentFor > SILENCE.afterSec && !warnedSilence) {
+      warnedSilence = true;
+      setStatus('Microfone ativo, mas não capta nada. Libere a permissão, suba o volume da música e aumente a Sensibilidade do áudio.', 'warn');
+    } else if (warnedSilence && level > SILENCE.recover) {
+      warnedSilence = false;
+      normalStatus();
+    }
+  }
 
   /* ---------- renderizador (delegado a shaders.js) ---------- */
 
@@ -125,6 +214,9 @@
       tiltX = pointer.x * sensors.orientSens;
       tiltY = pointer.y * sensors.orientSens;
     }
+
+    watchSignal(s.level, dt);
+    paintMeter(s.level);
 
     return {
       audio: s.level,

@@ -1,10 +1,10 @@
 /* v1su4rt — o texto dos shaders GLSL, separado do renderizador.
    É aqui que se mexe no visual: o fundo (VERTEX_BG / FRAGMENT_BG) e a nuvem de
-   pontos (VERTEX_POINTS / FRAGMENT_POINTS). Este ficheiro carrega antes de
+   pontos (VERTEX_POINTS / FRAGMENT_POINTS). Este arquivo carrega antes de
    shaders.js, que lê window.v1su4rtGlsl.
    Precisão: uniform e varying partilhados entre os dois estágios têm de declarar a
    MESMA precisão — o estágio de vértice garante highp, o de fragmento não, por isso
-   v_a e v_col são mediump dos dois lados. E mediump num telemóvel é um passo de
+   v_a e v_col são mediump dos dois lados. E mediump num celular é um passo de
    2^-10: uma fase grande (t / LIFE) tem de vir pronta de fora, nunca calculada aqui,
    senão a nuvem de pontos granula em passos visíveis. */
 (function () {
@@ -34,8 +34,10 @@ uniform float u_time;
 uniform float u_audio;
 uniform float u_bass;
 uniform float u_mid;
+uniform float u_treble;
 uniform float u_pulse;
 uniform vec2 u_tilt;
+uniform float u_aspect;
 
 varying vec2 v_uv;
 
@@ -50,9 +52,13 @@ void main() {
 
   // a inclinação empurra o centro das formas
   vec2 center = vec2(0.5) + u_tilt * 0.12;
-  float r = length(v_uv - center);
+  // as ondas têm de ser circulares em pixels e não em uv: o uv achata o x numa
+  // tela estreita, e em retrato as ondas liam-se como elipses deitadas. Multiplicar
+  // o x pelo aspect devolve a isotropia e deixa o espaçamento vertical como foi
+  // desenhado — é ele que manda no número de anéis.
+  float r = length((v_uv - center) * vec2(u_aspect, 1.0));
 
-  // O fundo tem de ficar abaixo de L 0,02 quase em todo o ecran: a nuvem de
+  // O fundo tem de ficar abaixo de L 0,02 quase em quase toda a tela: a nuvem de
   // pontos e desenhada em blending aditivo e nao ha forma de ler fumaca luminosa
   // sobre um palco ja aceso. Os valores antigos davam L 0,06 nos cantos.
   vec3 col = mix(
@@ -65,16 +71,19 @@ void main() {
   col += vec3(0.008, 0.004, 0.014) * (0.3 + 0.2 * sin(t * 0.5));
   col += vec3(0.030, 0.012, 0.036) * u_pulse;
 
-  // ondas: os graves mandam na amplitude, o volume no brilho
-  float wave = sin(r * (5.0 + u_bass * 6.0) - t) * (0.06 + u_bass * 0.14);
+  // ondas: os graves mandam na amplitude, os agudos na frequência e o volume no
+  // brilho. O agudo entra só na frequência e num fio de amplitude porque o fundo
+  // tem de continuar escuro: é sobre ele que a nuvem aditiva tem de ler.
+  float wave = sin(r * (5.0 + u_bass * 6.0 + u_treble * 9.0) - t) * (0.06 + u_bass * 0.14 + u_treble * 0.03);
   col += vec3(0.10, 0.05, 0.15) * wave * (0.4 + u_audio) * 0.35;
 
   // os médios deslocam a cor
   col.r += u_mid * 0.018;
   col.b -= u_mid * 0.012;
 
-  // grão muito baixo
-  col += (hash21(v_uv + t * 0.1) - 0.5) * 0.006;
+  // grão muito baixo, e os agudos levantam-no: é o cintilar do prato a aparecer
+  // no escuro, sem somar luz suficiente para lavar a flor
+  col += (hash21(v_uv + t * 0.1) - 0.5) * (0.006 + u_treble * 0.005);
 
   gl_FragColor = vec4(col, 1.0);
 }
@@ -90,7 +99,7 @@ void main() {
      e as vistas de raspão acumulam até ao brilho de orla da fumaça.
 
      Todo o cálculo vai no vértice e chega ao fragmento como cor e alpha: os termos
-     variam ponto a ponto, não píxel a píxel. Este programa não tem uniforms no
+     variam ponto a ponto, não pixel a pixel. Este programa não tem uniforms no
      fragmento, pelo que só os varying têm de declarar a MESMA precisão nos dois
      estágios — é isso que permite highp no vértice e mediump no fragmento. */
   const VERTEX_POINTS = `
@@ -203,12 +212,20 @@ void main() {
   col = mix(col, vec3(0.86, 0.52, 0.30), frag * age * 0.40);
   // o último termo acende as pontas: na nuvem, a borda da corola é uma só camada de
   // pontos e precisa de mais luz por ponto para ler ao mesmo nível do miolo
-  col *= 0.62 + u_audio * 0.25 + band * 0.15 + (0.16 + 0.15 * u_treble) * spark * (1.0 - r) + 0.95 * smoothstep(0.42, 0.88, r);
+  // orla que cintila com os agudos, sem somar luz: a média deste termo sobre os
+  // seeds é 1,0 (o seno de uma fase bem espalhada anula-se), por isso as pontas
+  // tremem com o prato enquanto o orçamento de luz do frame fica igual.
+  // Amplitude limitada a 0,45: o fator nunca vai a negativo e não apaga pontos.
+  float hatFlick = 1.0 + u_treble * 0.45 * sin(u_time * (3.0 + u_treble * 7.0) + a_seed.z * 24.0);
+  col *= 0.62 + u_audio * 0.25 + band * 0.15 + (0.16 + 0.15 * u_treble) * spark * (1.0 - r) + 0.95 * smoothstep(0.42, 0.88, r) * hatFlick;
 
   // névoa de profundidade: sem depth buffer é assim que o lado de trás fica atrás.
   // É forte de propósito: os pontos de trás são os que se empilham sobre os de
   // frente, e sem os abaixar o centro da corola estoura em branco.
-  float fog = 1.0 - smoothstep(3.2, 4.6, depth) * 0.82;
+  // O depth vem de clip.w, por isso escala com a distância da câmara: em retrato a
+  // câmara recua (ver resize() em shaders.js) e, sem normalizar, a flor inteira
+  // entraria na janela da névoa e apagaria. 3,5 é a distância de referência do desenho.
+  float fog = 1.0 - smoothstep(3.2, 4.6, depth * (3.5 / u_eye.z)) * 0.82;
 
   // os pontos da borda são maiores que os do miolo: a corola cobre mais frame sem
   // empilhar mais luz no centro, que é onde tudo se acumula
@@ -239,7 +256,7 @@ varying mediump vec3 v_col;
 varying mediump float v_a;
 
 void main() {
-  // sprite de núcleo quase chato e orla suave: a quatro píxeis um disco plano e um
+  // sprite de núcleo quase chato e orla suave: a quatro pixels um disco plano e um
   // gaussiano são indiferenciáveis, mas o núcleo chato leva o dobro e meio da luz
   // por ponto, que é o que faz a corola inteira ver-se e não só o miolo
   float d = length(gl_PointCoord - vec2(0.5));

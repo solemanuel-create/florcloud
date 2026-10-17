@@ -19,7 +19,11 @@ Com **Ativar interações** ligado e música com grave e agudo separáveis:
 - [ ] **Graves fortes (o fumo)**: acima de ~0,3 a borda da corola **descola pontos que sobem e se desfazem como fumaça colorida**, e a mancha da flor alarga-se; ao parar o grave os pontos voltam ao lugar.
 - [ ] **Batidas**: uma onda visível corre da borda para o centro; a rotação dá um empurrão.
 - [ ] **Médios**: as pétalas ondulam à volta do centro (vaga em azimute) e a orla ganha brilho.
-- [ ] **Agudos**: o miolo acende e os pontos da corola cintilam mais depressa.
+- [ ] **Agudos**: o miolo acende e os pontos da corola cintilam mais depressa; as **orlas/pontas das pétalas tremelicam** sem que a flor inteira fique mais clara (a média de luz não muda).
+- [ ] **Sala vazia, sem música**: a flor **não** pisca nem respira em pulso. O medidor mal se mexe.
+- [ ] **Medidor do microfone** (barra abaixo dos botões): sobe com a voz/música, encosta quase no fim num volume alto e volta a zero no silêncio. Aparece só depois de ativar.
+- [ ] **Vigia de sinal**: ative o microfone e faça silêncio total 5 s → aparece "Microfone ativo, mas não capta nada". Dê som → a mensagem volta à normal.
+- [ ] Sensibilidade a `0.5` com música: reage pouco mas de forma visível; a `3` satura sem ficar branca colada.
 - [ ] Volume alto sobe a exposição, mas o vermelho continua vermelho (as pétalas não ficam brancas).
 - [ ] Em silêncio a flor volta ao repouso suave, sem tremer.
 - [ ] **Intensidade da nuvem de pontos**: a `0` a flor inteira desaparece e só fica o fundo; a `1` o visual é o padrão; a `2` os pontos crescem e brilham o dobro. O número à direita acompanha o slider.
@@ -35,10 +39,15 @@ Com **Ativar interações** ligado e música com grave e agudo separáveis:
 Em DevTools → modo dispositivo (ou redimensionando a janela):
 
 - [ ] 360 px: painel na largura toda, embaixo; botão com altura de toque confortável.
+- [ ] **Retrato (390×844 ou 360×780): a corola inteira cabe na tela** — as pontas das pétalas não são cortadas nas bordas, e com **graves no máximo** (sensibilidade 3, música com grave forte) continuam dentro.
+- [ ] **Retrato**: a flor fica ligeiramente acima do centro, por cima do painel; o painel abre **recolido**, e o medidor continua visível.
+- [ ] **Deitado → em pé** (rodar o aparelho): o enquadramento muda e a flor passa a caber, sem recarregar.
 - [ ] 768 px: painel em cartão de 380 px no canto.
 - [ ] 1280 px+: painel de 400 px; visual ocupa toda a tela.
 - [ ] Celular deitado (ex. 800×360): painel estreito, sliders lado a lado, nada cortado.
+- [ ] Janela baixa com o painel expandido: os botões do cabeçalho ficam visíveis e o corpo do painel leva scroll.
 - [ ] O botão de seta recolhe e mostra o painel.
+- [ ] **Botão de tela cheia**: entra e sai; o ícone muda entre cantos para fora / para dentro; o painel continua utilizável lá dentro; Esc (desktop) e o gesto do Android saem e o ícone acompanha.
 
 ## 3. Android (Chrome, HTTPS)
 
@@ -55,10 +64,11 @@ Em DevTools → modo dispositivo (ou redimensionando a janela):
 - [ ] **Ativar interações**: aceitar microfone e movimento no mesmo toque.
 - [ ] Se negar o movimento: mensagem pede para recarregar a página.
 - [ ] Microfone e giroscópio reagem como no Android.
+- [ ] **Tela cheia**: o Safari do iPhone não faz `requestFullscreen` de páginas, por isso o botão mostra a mensagem a apontar para "Adicionar à Tela de Início"; aberta como app, a página já vai de borda a borda.
 
 ## 5. Acessibilidade e desempenho
 
-- [ ] Navegação por Tab passa por: botão ativar, recolher, sliders, privacidade; foco visível.
+- [ ] Navegação por Tab passa por: botão ativar, **tela cheia**, recolher, sliders, privacidade; foco visível.
 - [ ] Com "reduzir movimento" ligado no sistema, a animação fica mais lenta.
 - [ ] Em aparelho fraco, a imagem perde definição em vez de travar.
 - [ ] `privacy.html` abre e o link **Voltar** funciona.

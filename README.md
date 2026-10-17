@@ -2,7 +2,7 @@
 
 Shaders visuais em tela cheia que reagem ao **microfone** e ao **giroscópio**. Site estático, sem dependências, instalável (PWA) e com cache offline.
 
-A tela mostra uma **flor desenhada inteiramente em nuvem de pontos** — cerca de 47 mil pontos, cada um com a sua normal, cor e fase — sobre um fundo animado, e um painel pequeno: botão **Ativar interações**, os controles de sensibilidade (áudio e giroscópio), o controle **Intensidade da nuvem de pontos** e um botão para recolher o painel.
+A tela mostra uma **flor desenhada inteiramente em nuvem de pontos** — cerca de 47 mil pontos, cada um com a sua normal, cor e fase — sobre um fundo animado, e um painel pequeno: botão **Ativar interações**, botão de **tela cheia**, botão para recolher o painel, o **medidor do microfone** e os controles de sensibilidade (áudio e giroscópio) mais o controle **Intensidade da nuvem de pontos**. Em celular vertical o painel abre recolhido, para não tapar a flor.
 
 ## Como reage
 
@@ -13,10 +13,12 @@ O espectro é mapeado pelo **raio da flor**: a borda pertence aos graves, o cent
 | Volume | ondas a partir do centro, brilho | abre todas as pétalas e sobe a exposição |
 | Graves | amplitude da deformação | endireita a corola, ondula a borda, e acima de 0,28 **descola pontos da borda para dentro, que sobem e se desfazem em fumo colorido** |
 | Médios | deslocamento de cor | onda que corre à volta das pétalas e realce na orla |
-| Agudos | — | acende o miolo e faz cintilar os pontos da corola |
+| Agudos | encurta o comprimento de onda do fundo e levanta o grão | acende o miolo, faz cintilar os pontos da corola e tremelicar as orlas, sem somar luz |
 | Batidas | flash | onda que viaja da borda ao centro e um empurrão na rotação |
 | Giroscópio | move o centro das formas (a posição ao ativar vira o zero) | inclina a flor em 3/4 |
 | Mouse / toque | mesmo efeito do giroscópio | mesmo efeito do giroscópio, para telas sem sensor |
+
+Cada banda do espectro **normaliza-se sozinha**: um piso de ruído que cai de imediato e sobe devagar, um envelope de pico que se deixa cair devagar, e a escala entre os dois. Por isso a reação não depende de calibrar ganhos para a música de cada casa, e um quarto silencioso não faz a flor piscar. O curso mínimo por banda é o que impede o silêncio de ser amplificado até ao teto; o `beatMinLevel` é o que exige que uma batida seja alta de verdade, e não apenas um sobressalto da média.
 
 O contraste da corola vem da luz por ponto: cada ponto é iluminado pela sua própria normal, com uma face clara, uma sombra funda (`0,02` contra `2,30`), a luz que atravessa a pétala fina por detrás e a orla acesa quando o ponto está visto de topo. É isso que faz a nuvem ler como pétalas translúcidas e não como mancha.
 
@@ -24,10 +26,12 @@ O slider **Intensidade da nuvem de pontos** é um ganho sobre a nuvem toda, leva
 
 ## Celular, tablet e desktop
 
-- **Celular (< 640 px):** painel na largura toda, embaixo. Resolução interna limitada a 1.5x.
+- **Celular (< 640 px):** painel na largura toda, embaixo, **aberto recolhido** com o medidor do microfone à vista. Resolução interna limitada a 1.5x.
 - **Tablet (640–1023 px):** painel em cartão de 380 px no canto. Até 1.75x.
 - **Desktop (≥ 1024 px):** painel de 400 px no canto. Até 2x.
 - **Celular deitado:** painel estreito, sliders lado a lado.
+- **Retrato:** o campo de visão é vertical e fixo, por isso é a largura que corta. A câmara recua automaticamente nas telas estreitas para a corola aberta caber inteira, e a flor sobe 10% da altura para não ficar centrada debaixo do painel. Deitado e quadrado ficam exatamente como foram desenhados.
+- **Tela cheia:** o botão pede a tela cheia à página toda, não só ao canvas, para o painel continuar utilizável lá dentro. O Safari do iPhone não implementa `requestFullscreen` em conteúdo comum — nesse caso use **Compartilhar → Adicionar à Tela de Início**, que abre sem a barra do navegador.
 - Se o aparelho não sustentar ~40 fps, a resolução interna desce sozinha, até 50% do limite.
 - `prefers-reduced-motion` reduz a velocidade da animação a 35%.
 - Sem WebGL, fica um fundo estático e o painel avisa que o visual não pode ser desenhado.
@@ -45,10 +49,10 @@ Abra `http://localhost:8000`. O microfone funciona em `localhost`; o giroscópio
 O `vercel.json` já declara o projeto como estático (sem framework, sem build, saída na raiz), então basta:
 
 1. Importar o repositório em [vercel.com/new](https://vercel.com/new).
-2. Não tocar em nenhuma opção de build — a deteção já vem certa.
+2. Não tocar em nenhuma opção de build — a detecção já vem certa.
 3. Deploy. O HTTPS é automático, e é isso que permite o microfone e o giroscópio no celular.
 
-O `service-worker.js` é servido com `no-store` para o Vercel não o cachear e prender os utilizadores numa versão velha. Os `.md`, `.slnx`, `scripts/` e `.vs/` ficam fora do deploy pelo `.vercelignore`.
+O `service-worker.js` é servido com `no-store` para o Vercel não o cachear e prender os usuários numa versão velha. Os `.md`, `.slnx`, `scripts/` e `.vs/` ficam fora do deploy pelo `.vercelignore`.
 
 ## Publicar no GitHub Pages
 
@@ -58,21 +62,24 @@ O `service-worker.js` é servido com `no-store` para o Vercel não o cachear e p
 
 ## Mapa do projeto
 
-| Onde mudar o quê | Ficheiro |
+| Onde mudar o quê | Arquivo |
 | --- | --- |
 | Cor, luz, contraste, transparência, tamanho dos pontos, fumo, fundo | [`assets/shaders.glsl.js`](assets/shaders.glsl.js) — texto GLSL puro |
 | Forma da flor: voltas, pétalas, folhas, densidade da nuvem | [`assets/shaders.js`](assets/shaders.js) — `WHORLS`, `LEAVES`, `buildCloud()` |
-| Bandas de frequência, portas, suavização, giroscópio | [`assets/interaction.js`](assets/interaction.js) |
-| Painel, sliders, ligação dos sensores ao renderizador | [`assets/app.js`](assets/app.js) |
+| Enquadramento: FOV, distância da câmara, recuo e subida em retrato | [`assets/shaders.js`](assets/shaders.js) — bloco `FRAME` |
+| Bandas de frequência, portas, suavização, batida, giroscópio | [`assets/interaction.js`](assets/interaction.js) — bloco `TUNE` |
+| Painel, sliders, tela cheia, medidor, avisos do microfone | [`assets/app.js`](assets/app.js) |
 | Layout responsivo do painel | [`assets/styles.css`](assets/styles.css) |
 | Estrutura da página, ordem dos scripts | [`index.html`](index.html) |
 | Cache offline, versão do deploy | [`service-worker.js`](service-worker.js) — `CACHE_NAME` |
-| Cache-Control e deteção de static no Vercel | [`vercel.json`](vercel.json) |
+| Cache-Control e detecção de static no Vercel | [`vercel.json`](vercel.json) |
 | O que vai no deploy do Vercel | [`.vercelignore`](.vercelignore) |
 | Histórico das mudanças | [`CHANGELOG.md`](CHANGELOG.md) |
 
 - `assets/shaders.glsl.js` são os quatro shaders em texto (`VERTEX_BG`, `FRAGMENT_BG`, `VERTEX_POINTS`, `FRAGMENT_POINTS`). É carregado **antes** de `shaders.js`, que só os lê de `window.v1su4rtGlsl`. Quase todo o ajuste visual acontece aqui, e nenhum precisador do renderizador muda.
 - `assets/shaders.js` constrói a geometria em CPU e desenha. Cada ponto leva posição, cor, normal e semente; o resto é feito no shader. **Atenção ao `mediump`:** no celular o passo é 2⁻¹⁰, por isso a fase `age` é dobrada na CPU antes de ir para o shader.
+- **Todos os números do som estão no bloco `TUNE`**, no topo de `assets/interaction.js`: FFT, portas e curso mínimo por banda, ataque/release, batida, joelho suave e giroscópio. Não há ganhos espalhados pelo arquivo — para mudar a reação ao som, muda-se ali. As bandas normalizam-se sozinhas (piso de ruído + envelope de pico), por isso não há um valor "certo" para a música de cada casa.
+- **Todos os números do enquadramento estão no bloco `FRAME`**, em `assets/shaders.js`. O FOV é vertical e fixo, por isso é a **largura** que corta: `reach` é o meio-comprimento da corola aberta e `fill` a fração da meia-largura visível que ela pode ocupar. Se mexer em `WHORLS`/`LEAVES` e a flor crescer, atualize `reach` — senão volta a cortar as pontas em retrato. A névoa dos shaders é normalizada por `u_eye.z`, por isso lê-se igual com a câmara recuada.
 - `service-worker.js`: cache-first. Ao mudar qualquer arquivo em `APP_FILES`, aumente `CACHE_NAME` e registe a mudança no `CHANGELOG.md`.
 - `manifest.webmanifest`, `icon.svg`, `icons/`: instalação como app.
 - `privacy.html`: nota de privacidade.
@@ -85,5 +92,8 @@ Ordem de carregamento: `shaders.glsl.js` → `shaders.js` → `interaction.js` �
 ## Problemas comuns
 
 - **Versão antiga aparecendo:** aumente `CACHE_NAME` no `service-worker.js`, ou desregistre em DevTools → Application → Service Workers. Em desenvolvimento, active **Disable cache** no DevTools: o service worker deixa passar pedidos que peçam recarregamento forçado.
-- **Microfone sem reação:** permissões do site, HTTPS, e aumente **Sensibilidade áudio**.
+- **Microfone sem reação:** olhe primeiro para o **medidor** abaixo dos botões. Se ele não se mexer, o problema é a captura (permissão, HTTPS, ou o microfone errado no sistema) e não o shader — ao fim de 5 s sem sinal o painel diz isso mesmo. Se ele mexer e a flor não, aumente **Sensibilidade áudio**.
+- **A flor pisca sozinha num quarto silencioso:** não devia acontecer (as bandas só sobem com sinal acima do seu curso mínimo). Se acontecer, suba `beatFloor`/`beatMinLevel` no bloco `TUNE`.
+- **Flor cortada nas pontas em retrato:** o `reach` do bloco `FRAME` ficou abaixo do tamanho real da corola depois de mexer em `WHORLS`. Aumente `reach`, ou diminua `fill`.
+- **Tela cheia sem efeito no iPhone:** é o Safari, não o site. Instale com **Compartilhar → Adicionar à Tela de Início**.
 - **Giroscópio sem reação:** no iOS a permissão de movimento só é pedida ao tocar em **Ativar interações**; se negada, recarregue a página.

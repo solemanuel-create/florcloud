@@ -1,4 +1,4 @@
-# ficheiros de trabalho: ficam no repositório, não vão para o site publicado
+# arquivos de trabalho: ficam no repositório, não vão para o site publicado
 .vs/
 .vercel/
 scripts/

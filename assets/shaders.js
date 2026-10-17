@@ -13,7 +13,7 @@
 
   /* ========== SHADERS ========== */
 
-  // O texto GLSL vive em shaders.glsl.js, carregado antes deste ficheiro: assim,
+  // O texto GLSL vive em shaders.glsl.js, carregado antes deste arquivo: assim,
   // para mudar o visual não é preciso atravessar o renderizador.
   const GLSL = window.v1su4rtGlsl;
   if (!GLSL) throw new Error('[v1su4rt] shaders.glsl.js em falta: sem texto GLSL não há renderizador');
@@ -87,7 +87,7 @@
   ];
 
   /* A nuvem é construída sobre as MESMAS superfícies paramétricas da flor: para
-     cada superfície faz-se uma grelha com tantas células quanta a sua área, e cai
+     cada superfície faz-se uma grade com tantas células quanta a sua área, e cai
      um ponto num ponto aleatório de cada célula. A densidade fica uniforme sobre
      toda a flor, e qualquer prefixo da lista é uma amostra representativa dela —
      é isso que permite desenhar menos pontos quando faltam fps sem mudar a
@@ -377,12 +377,27 @@
   const LIFE = 3.4;
   let phase = 0;
 
-  const eye = [0, 0, 3.5];
+  /* Enquadramento — todos os números da câmara num só sítio.
+     O FOV é vertical e fixo, por isso é a LARGURA que corta: quanto mais estreito
+     a tela, mais perto fica o corte das pontas das pétalas. Em vez de escalar a
+     flor, recua-se a câmara: os pontos têm diâmetro em unidades de mundo, e assim
+     a relação ponto/flor continua a ser a que os shaders foram desenhados para ler
+     como nuvem de fumo. */
+  const FRAME = {
+    fovDeg: 45,
+    eyeZ: 3.5, // distância de referência: os 3.2..4.6 da névoa nos shaders são medidos aqui
+    reach: 0.96, // meio-comprimento da corola aberta (pétala 0,932 × escala 0,82 + abertura dos graves)
+    fill: 0.94, // fração da meia-largura visível que a flor pode ocupar
+    lift: 0.20, // em retrato, fração da meia-altura visível que a flor sobe para livre do painel
+  };
+
+  const eye = [0, 0, FRAME.eyeZ];
+  let camLift = 0;
 
   let proj = identity();
   let view = lookAt(eye, [0, 0, 0], [0, 1, 0]);
   let pointMaxPx = 64; // máximo do driver para gl_PointSize
-  let pointPx = 1; // píxeis por unidade de mundo à profundidade 1
+  let pointPx = 1; // pixels por unidade de mundo à profundidade 1
 
   let quality = 1; // cai quando os fps não chegam
   let fpsAvg = 60;
@@ -449,7 +464,7 @@
     }
     if (!gl) return false;
 
-    progBg = buildProgram(VERTEX_BG, FRAGMENT_BG, ['a_pos'], ['u_time', 'u_audio', 'u_bass', 'u_mid', 'u_pulse', 'u_tilt']);
+    progBg = buildProgram(VERTEX_BG, FRAGMENT_BG, ['a_pos'], ['u_time', 'u_audio', 'u_bass', 'u_mid', 'u_treble', 'u_pulse', 'u_tilt', 'u_aspect']);
     progPoints = buildProgram(
       VERTEX_POINTS,
       FRAGMENT_POINTS,
@@ -506,10 +521,20 @@
     if (canvas.width !== w || canvas.height !== h) {
       canvas.width = w;
       canvas.height = h;
-      proj = perspective(45, w / h, 0.1, 100);
+      const aspect = w / h;
+      const tan = Math.tan((FRAME.fovDeg * Math.PI) / 360);
+      // meia-largura visível à profundidade eyeZ vale tan*eyeZ*aspect; em retrato
+      // (390×844 → aspect 0,46) dá 0,669 com eyeZ 3,5 e a flor reach 0,96 perdia
+      // ~30% das pontas. Recua-se a câmara só quando é preciso: a 16:9 horizontal
+      // e no quadrado o enquadramento fica exatamente no de origem.
+      eye[2] = Math.max(FRAME.eyeZ, FRAME.reach / (FRAME.fill * tan * aspect));
+      // o painel de vidro tapa a banda de baixo em retrato: a flor sobe, centrada
+      // na zona livre em vez de centrada na tela
+      camLift = aspect < 1 ? tan * eye[2] * FRAME.lift : 0;
+      proj = perspective(FRAME.fovDeg, aspect, 0.1, 100);
       view = lookAt(eye, [0, 0, 0], [0, 1, 0]);
     }
-    // proj[5] é cot(fov/2): converte unidades de mundo em píxeis à profundidade 1
+    // proj[5] é cot(fov/2): converte unidades de mundo em pixels à profundidade 1
     pointPx = (canvas.height / 2) * proj[5];
     gl.viewport(0, 0, canvas.width, canvas.height);
   }
@@ -538,8 +563,10 @@
     gl.uniform1f(p.uniform.u_audio, state.audio);
     gl.uniform1f(p.uniform.u_bass, state.bass);
     gl.uniform1f(p.uniform.u_mid, state.mid);
+    gl.uniform1f(p.uniform.u_treble, state.treble);
     gl.uniform1f(p.uniform.u_pulse, state.pulse);
     gl.uniform2f(p.uniform.u_tilt, state.tiltX, state.tiltY);
+    gl.uniform1f(p.uniform.u_aspect, canvas.width / Math.max(1, canvas.height));
 
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
@@ -582,14 +609,14 @@
     const ty = clamp(state.tiltY, -1.2, 1.2);
 
     // 3/4: a base de ~1.02 rad (~58°) faz a câmara olhar para dentro da corola,
-    // por isso o giroscópio e o rato também inclinam a flor, não só o fundo
+    // por isso o giroscópio e o mouse também inclinam a flor, não só o fundo
     const s = 0.82 * (0.98 + state.audio * 0.04 + state.pulse * 0.02);
     let model = mat4Scale(s, s, s);
     model = multiplyMatrices(mat4RotateY(spin), model);
     model = multiplyMatrices(mat4RotateZ(tx * 0.25), model);
     // os graves fazem a flor inclinar-se para a frente
     model = multiplyMatrices(mat4RotateX(1.02 + ty * 0.25 - state.bass * 0.10), model);
-    model = multiplyMatrices(mat4Translate(0, 0.04, 0), model);
+    model = multiplyMatrices(mat4Translate(0, 0.04 + camLift, 0), model);
 
     const p = progPoints;
     gl.useProgram(p.program);
