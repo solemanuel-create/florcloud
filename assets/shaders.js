@@ -538,7 +538,7 @@
   let buildMs = 0; // milissegundos de tela em branco gastos a construir a nuvem
   let headPoints = 0; // B4: quantos pontos moram na cabeça e foram reindexados no disco
 
-  const state = { audio: 0, bass: 0, mid: 0, treble: 0, pulse: 0, pulse2: 0, timbre: 0.5, tiltX: 0, tiltY: 0, cloud: 1, mixCor: 0, mixForm: 0 };
+  const state = { audio: 0, bass: 0, mid: 0, treble: 0, pulse: 0, pulse2: 0, timbre: 0.5, tiltX: 0, tiltY: 0, cloud: 1, mixCor: 0, mixForm: 0, hitT: 0, hit2T: 0, hitPend: false, hit2Pend: false };
 
   // escala do flash e do contratempo, separada do timeScale: prefers-reduced-motion
   // pode abrandar o movimento sem deixar um estroboscópio de tela cheia a 1,0
@@ -655,7 +655,7 @@
       [
         'u_proj', 'u_view', 'u_model', 'u_normalMat', 'u_eye', 'u_light', 'u_time', 'u_audio', 'u_bass',
         'u_mid', 'u_treble', 'u_pulse', 'u_pulse2', 'u_timbre', 'u_phase', 'u_cloud', 'u_size', 'u_maxPx',
-        'u_mixCor', 'u_mixForm',
+        'u_mixCor', 'u_mixForm', 'u_hitT', 'u_hit2T',
       ],
       'nuvem'
     );
@@ -870,6 +870,10 @@
     // onde o dedo está, não um atraso a chegar ao sítio onde o dedo já esteve
     gl.uniform1f(p.uniform.u_mixCor, state.mixCor);
     gl.uniform1f(p.uniform.u_mixForm, state.mixForm);
+    // S1 — a hora do último golpe, no MESMO relógio de u_time (timeScale incluído): o
+    // shader só usa a diferença, por isso o valor absoluto não interessa
+    gl.uniform1f(p.uniform.u_hitT, state.hitT);
+    gl.uniform1f(p.uniform.u_hit2T, state.hit2T);
     bindPoints(p);
 
     // aditivo: as camadas de pontos somam-se, e é isso que faz as pétalas
@@ -892,6 +896,12 @@
 
     time += dt * timeScale;
     phase = (time / LIFE) % 1;
+    /* S1 — a marca do golpe é carimbada DEPOIS de o relógio avançar, porque é com o
+       `time` de baixo que o draw de hoje trabalha: assim, no frame em que a batida
+       entra, u_time - u_hitT é exatamente 0 e a onda nasce no instante do som, não
+       num ponto arbitrário da senoide do relógio corrido. */
+    if (state.hitPend) { state.hitT = time; state.hitPend = false; }
+    if (state.hit2Pend) { state.hit2T = time; state.hit2Pend = false; }
     tuneQuality(dt);
 
     // só a cor: nada nesta cena escreve profundidade, por isso não há depth buffer
@@ -1033,6 +1043,10 @@
     state.treble = c01(obj.treble);
     state.pulse = c01(obj.pulse) * flashScale;
     state.pulse2 = c01(obj.pulse2) * flashScale;
+    // S1 — o instante, não a intensidade: fica uma marca pendente até o relógio do
+    // frame avançar, onde é carimbada (ver frame())
+    if (obj.hit) state.hitPend = true;
+    if (obj.hit2) state.hit2Pend = true;
     // sem canal de timbre no driver, fica onde estava: 0 daria "tudo graves" e a
     // corola ler-se-ia com a fronteira trocada num navegador sem microfone
     if (obj.timbre != null) state.timbre = clamp(Number(obj.timbre) || 0, 0, 1);
@@ -1074,6 +1088,9 @@
     mix: function () { return { cor: state.mixCor, form: state.mixForm }; },
     // diagnóstico: quantos dos 46.892 pontos foram reindexados no disco de sementes
     seedHeadPoints: function () { return headPoints; },
+    // diagnóstico da sincronia: quanto tempo de animação passou desde cada golpe.
+    // É o número que prova que a fase está presa — tem de cair a 0 no frame do golpe.
+    sinceHits: function () { return { beat: time - state.hitT, off: time - state.hit2T, time: time }; },
     // quanto custou desenhar a flor em CPU, em ms: é o número a olhar antes de se
     // decidir se a construção precisa de um worker
     buildTime: function () { return buildMs; },

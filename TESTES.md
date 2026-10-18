@@ -17,7 +17,7 @@ Com **Ativar interações** ligado e música com grave e agudo separáveis:
 
 - [ ] **Graves**: a corola abre de fora para dentro e a flor inclina-se para a frente.
 - [ ] **Graves fortes (o fumo)**: acima de ~0,3 a borda da corola **descola pontos que sobem e se desfazem como fumaça colorida**, e a mancha da flor alarga-se; ao parar o grave os pontos voltam ao lugar.
-- [ ] **Batidas**: uma onda visível corre da borda para o centro; a rotação dá um empurrão.
+- [ ] **Batidas**: uma onda visível corre **do centro para a borda** e nasce no instante do golpe, não num ponto à sorte do ciclo; a rotação dá um empurrão.
 - [ ] **Médios**: as pétalas ondulam à volta do centro (vaga em azimute) e a orla ganha brilho.
 - [ ] **Agudos**: o miolo acende e os pontos da corola cintilam mais depressa; as **orlas/pontas das pétalas tremelicam** sem que a flor inteira fique mais clara (a média de luz não muda).
 - [ ] **Palmas / estalidos / prato fechado** (ataque sem bombo): as orlas ficam mais densas e irregulares por uma fração de segundo. A flor **não** dá flash de fundo — é o contratempo, não a batida.
@@ -32,6 +32,11 @@ Com **Ativar interações** ligado e música com grave e agudo separáveis:
 
 - [ ] **Bater no ecrã** dá exatamente o flash de uma batida de grave (mesma luz, mesmo decaimento). Teste **com o microfone negado**: continua a dar.
 - [ ] Bater no ecrã **não** mexe no medidor nem faz o vigia de sinal calar — o dedo não finge que há som.
+- [ ] **Sincronia (S1)**: com `v1su4rtShaders.sinceHits()` no console, bata no ecrã — `beat` cai a ~0 no instante do toque e volta a contar. Com música, um metrónomo a 120 bpm deve ver `beat` a zerar 2× por segundo; se zerar a meio do intervalo, a fase está solta.
+- [ ] **Um golpe, um disparo (S2)**: uma nota grave **corrida** (segurada, sem ataque novo) não pode pôr a flor a piscar em loop. Só um topo novo conta.
+- [ ] **Chiado de sala (S2)**: ventoinha, ar condicionado ou ganho alto não cintilam a flor depois de ~0,5 s. Se der um flash por segundo durante minutos, o piso de ruído do caminho rápido (`hitNoiseCrawl`/`hitNoiseOver`) não está a apanhar o nível da sala.
+- [ ] **Grave contra agudo (S2)**: um bombo dá flash **e não** tremelicar; um prato dá tremelico **e não** flash. Um passo no ar pode dar tremelico — é banda larga, e o agudo domina.
+- [ ] **A luz não acompanhou a fase (S1)**: com o microfone fechado, a média do frame inteiro está onde estava (emparelhado: 15,04 antes / 15,06 depois, zero píxeis queimados). Se a flor ficar mais clara ou mais escura sem ninguém ter mexido nos sliders, o carimbo do golpe mexeu numa amplitude e não só na fase.
 - [ ] **Giroscópio**: incline o aparelho e segure-o assim 15–30 s → a flor volta a centrar-se devagar, ficando a pender pouco (8° de banda morta). Um gesto rápido de 0,5 s usa o curso todo e não é apagado.
 - [ ] **Sala vazia, sem música**: a flor **não** pisca nem respira em pulso. O medidor mal se mexe.
 - [ ] **Medidor do microfone** (barra abaixo dos botões): sobe com a voz/música, encosta quase no fim num volume alto e volta a zero no silêncio. Aparece só depois de ativar.
@@ -106,3 +111,5 @@ Em DevTools → modo dispositivo (ou redimensionando a janela):
 - [ ] **Medir luz entre builds** exige as duas mãos na porta: os sete canais de áudio fixados em 0, `u_light` na constante de origem, `#cloud-intens` **verificado e igual** nos dois lados, e resolução interna e número de pontos registados ao lado do número — `tuneQuality()` mexe nos dois últimos sozinho quando o fps cai. Uma comparação sem esses valores não vale nada: foi assim que três números anteriores se deitaram fora.
 - [ ] **Comparar formas diferentes** exige mudar a métrica: o recorte central deixa de cobrir a mesma coisa quando a flor morpha. Meça o **frame inteiro** — média dos três canais e percentagem de pixels queimados (`min(R,G,B) > 240`).
 - [ ] **Não emule um fator de cor com o `u_cloud`.** O `u_cloud` entra no alpha, que é cortado a 1,0 antes de multiplicar, e a emulação lê-se mais clara que escalar a cor dentro do shader: dava +17% onde o fator compilado media −3%. Meça sempre o build compilado, depois de limpar caches e recarregar.
+- [ ] **Antes de otimizar latência, confirme que é latência.** O espetro chega ao JavaScript aos 10 ms e o waveform aos 2 ms; nada disso explicava a batida a cair num zero da senoide. O movimento conduzia o *instante* pelo relógio corrido do shader, não pelo golpe. `sinceHits()` responde à pergunta em dois segundos; uma afinação de atraso não.
+- [ ] **A comparação de luz é por par, no mesmo minuto.** Os primeiros números do S1 saíram 12,9% abaixo do referente porque o `#cloud-intens` tinha sido mexido entre os dois lados. Reabra os dois builds seguidos e grave todos os `input[type=range]` ao lado da mediana, como acima.

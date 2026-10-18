@@ -226,7 +226,11 @@
      fingir que há som — ia calar o aviso de "não capta nada" para sempre. */
   const TAP_DECAY = 4.5; // o beatDecay de interaction.js, para darem o mesmo flash
   let tapPulse = 0;
-  canvas.addEventListener('pointerdown', () => { tapPulse = 1; });
+  // S1 — o dedo também dá INSTANTE, não só intensidade: o flag vive um frame e é
+  // consumido em readFrame, para o toque carimbar u_hitT no mesmo frame do clique
+  // em vez de o carimbar com o relógio atrasado do decaimento
+  let tapIsHit = false;
+  canvas.addEventListener('pointerdown', () => { tapPulse = 1; tapIsHit = true; });
 
   /* ---------- medidor e vigia de sinal ---------- */
 
@@ -271,6 +275,8 @@
     watchSignal(s.level, dt);
     paintMeter(s.level);
     tapPulse *= Math.exp(-dt * TAP_DECAY);
+    const tapHit = tapIsHit;
+    tapIsHit = false;
 
     return {
       audio: s.level,
@@ -281,6 +287,11 @@
       // iguais, quer o microfone esteja aberto quer não
       pulse: Math.max(s.pulse, tapPulse),
       pulse2: s.pulse2,
+      // S1 — os dois instantes. O toque entra no do grave porque é esse o canal que
+      // dispara a onda: bater na tela tem de pôr a onda a nascer ali, e não esperar
+      // pelo próximo zero de uma senoide que corre à margem do que se ouve
+      hit: s.hit || tapHit,
+      hit2: s.hit2,
       timbre: s.timbre,
       tilt: [tiltX, tiltY]
     };

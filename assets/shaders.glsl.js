@@ -139,6 +139,14 @@ uniform float u_mid;
 uniform float u_treble;
 uniform float u_pulse;
 uniform float u_pulse2;
+/* S1 — a HORA do último golpe, no mesmo relógio de u_time. O que este shader usa é a
+   diferença (u_time - u_hitT), nunca o valor absoluto. Sem isto, a amplitude da onda
+   vinha do som mas a FASE vinha do relógio corrido: duas batidas seguidas apanhavam a
+   senoide em pontos arbitrários, uma lançava uma onda visível e a outra caía num zero e
+   só aparecia quando a senoide voltasse. É exatamente a sensação de "não bate com o
+   som", e nenhum valor de ataque corrige isso — o que faltava era um instante. */
+uniform float u_hitT;
+uniform float u_hit2T;
 uniform float u_timbre;
 uniform float u_phase;
 uniform float u_cloud;
@@ -209,7 +217,14 @@ void main() {
 
   // o som mexe na flor toda: abre por raio, ondula a borda nas batidas
   float open = u_bass * 0.30 + u_audio * 0.10;
-  float ripple = sin(r * 9.0 - u_time * 5.5) * u_pulse * 0.075;
+  /* S1 — desde a batida, não desde o princípio do mundo. No frame em que o golpe
+     entra isto vale 0 exato (a marca é carimbada em shaders.js depois de o relógio
+     avançar), por isso a crista nasce sempre no mesmo sítio e viaja para fora com o
+     decaimento do pulso. Entre batidas cresce livre, e é o que se quer: a onda
+     continua a correr depois do som já ter parado. */
+  float sinceBeat = u_time - u_hitT;
+  float sinceOff = u_time - u_hit2T;
+  float ripple = sin(r * 9.0 - sinceBeat * 5.5) * u_pulse * 0.075;
   float breath = mix(u_treble, u_bass, xover) * 0.10;
   float shimmer = sin(p.y * 18.0 + u_time * 3.0 + r * 12.0) * u_mid * 0.012;
   float sway = sin(az * 6.0 + u_time * 2.2) * u_mid * 0.035;
@@ -321,7 +336,10 @@ void main() {
   // apagava pontos — mete-lhe um segundo harmónico por cima: o waveform fica mais
   // denso e mais irregular num prato fechado, e a MÉDIA sobre os seeds continua
   // 0,55 exata porque os dois senos se anulam. Nem mais luz, nem pontos apagados.
-  float sf = u_time * (2.5 + u_treble * 9.0) + a_seed.y * 40.0;
+  // S1 — o cintilar começa no prato, não quando a senoide lhe dá jeito. O relógio é o
+  // do contratempo, mas os seeds continuam a espalhar as fases, por isso a média sobre
+  // os pontos fica 0,55 como antes: prende-se o instante, não se ganha luz.
+  float sf = sinceOff * (2.5 + u_treble * 9.0) + a_seed.y * 40.0;
   float flick = (sin(sf) + u_pulse2 * 0.55 * sin(sf * 2.7 + a_seed.x * 17.0)) / 1.55;
   float spark = 0.55 + 0.45 * flick;
   float band = mix(u_treble, u_bass, xover);
@@ -359,7 +377,7 @@ void main() {
        de mais luz por ponto (~+0,57 de mediana na borda) para ler ao mesmo nível do
        miolo, onde as cinco voltas se empilham. É o termo mais caro do orçamento de
        luz e o primeiro a baixar se a flor começar a estourar em branco. */
-  float hatFlick = 1.0 + (u_treble * 0.45 + u_pulse2 * 0.35) * sin(u_time * (3.0 + u_treble * 7.0) + a_seed.z * 24.0);
+  float hatFlick = 1.0 + (u_treble * 0.45 + u_pulse2 * 0.35) * sin(sinceOff * (3.0 + u_treble * 7.0) + a_seed.z * 24.0);
   col *= 0.62 + u_audio * 0.25 + band * 0.15 + (0.16 + 0.15 * u_treble) * spark * (1.0 - r) + 0.95 * smoothstep(0.42, 0.88, r) * hatFlick;
 
   /* B3 — a mistura de cor roda o matiz de toda a paleta, não troca três números:

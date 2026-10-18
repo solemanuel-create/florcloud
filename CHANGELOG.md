@@ -4,6 +4,54 @@ Formato seguido: uma entrada por mudança de visual ou de estrutura, com o `CACH
 correspondente do `service-worker.js` — é ele que diz ao browser para deitar fora a
 versão guardada.
 
+## 2026-10-18 — o visual passou a bater no instante do som, não no ponto da senoide (`v1su4rt-v19`)
+
+Lote S (sincronia microfone↔shaders). Antes de mexer, mediu-se o atraso real do caminho todo;
+depois trocou-se a fase do movimento, e por último passou-se o detetor de golpe para o domínio do
+tempo.
+
+- **S0 — o atraso não era onde se pensava.** Um clique sintético injetado no mesmo `AnalyserNode`
+  (3 repetições, números idênticos): o espetro fica visível ao JavaScript aos **10 ms**, o
+  waveform aos **2 ms** (`baseLatency` 0,01 s, 48 kHz). Mudar `smoothingTimeConstant` de 0,15 para
+  0 não altera o tempo nem um milissegundo e baixa o pico ~6% (87→82) — a ideia de alisar menos
+  para responder mais cedo foi medida e abandonada antes de escrever código.
+  `OfflineAudioContext` + `AnalyserNode` devolve **zeros** no Chrome: a resposta em frequência não
+  pode ser medida fora de linha.
+- **S0 — o defeito era de fase, não de latência.** Todo o movimento que o som conduzia era
+  `sin(u_time * f + semente)`: o áudio punha a **amplitude**, nunca o **instante**. Uma batida que
+  caísse num zero da senoide não produzia nada, e a mesma batida meia volta depois produzia o
+  dobro. 10 ms de latência não explicam isso; a fase solta sim.
+- **S1 — `u_hitT` / `u_hit2T`: o carimbo do golpe.** O `shaders.js` guarda a hora do frame em que
+  o detetor disparou e o shader trabalha com `u_time - u_hitT` em vez de `u_time` na onda da
+  batida, no cintilar e no tremor do chapéu. O carimbo é posto **depois** de o relógio avançar, por
+  isso no frame do golpe a diferença é exatamente 0. Verificado na página: entre o `pointerdown` e
+  o carimbo mediram-se **0,0069 s**. O toque no ecrã carimba o mesmo instante que o bombo.
+- **S2 — o ataque passou a ser lido nas amostras, não no espetro.** Um par lowpass/highpass de um
+  polo a 250 Hz sobre o waveform dá o pico grave e o pico agudo numa única passagem, partilhada com
+  o RMS que já lá ia. O golpe tem de fazer **um topo novo**: comparação com uma referência que decai
+  (τ ~77 ms) e exige ser ultrapassada por 1,35, mais um **piso de ruído** que cai na hora e sobe a
+  0,35/s. O grave manda no flash quando domina; o agudo só é elegível quando domina por margem
+  (1,4), que é o que separa um prato de um passo no ar.
+- **S2 — o primeiro detetor errado, medido.** A primeira versão reutilizou o par média/desvio dos
+  detetores de espetro e falhou: uma nota de 80 Hz corrida está sempre acima da sua própria média e
+  re-disparava a cada refractária. E sem o piso de ruído, ruído branco a −26 dBFS dava **18 disparos
+  em 3 s**; com ele, **0**.
+- **S2 — bateria sintética sem microfone, 12/12.** Silêncio, tom corrido, bumbo a 120 bpm, prato a
+  120 bpm, alternados, ruído branco a −26 e −20 dB, chiado+batidas, crescendo, passo, golpe único e
+  música. A fase dos 6 golpes bate todos dentro de **0,017 s** — um frame a 60 Hz, que é o teto do
+  que um `requestAnimationFrame` pode dar.
+- **O que a bateria não esconde:** os dois golpes mais quietos do crescendo (topo 0,12 e 0,25 da
+  escala) não disparam pelo caminho rápido, porque os pisos absolutos `hitFloorLo/Hi` estão acima
+  deles de propósito. Ficam entregues ao detetor de espetro, que na bateria foi calado a zeros
+  para isolar o caminho novo.
+- **Orçamento de luz intacto.** A/B emparelhado no mesmo browser, mesma resolução (330×431),
+  mesmos controlos (nuvem 1,1, cor 1, forma 1), microfone fechado, 504 amostras do frame inteiro em
+  21 s: **15,04** com o S1 contra **15,06** no build anterior, **0 píxeis queimados** nos dois. O
+  ganho é fase, não luz.
+- **Ainda não verificado:** microfone a sério num celular e no tablet, nem em produção na Vercel —
+  o browser embutido onde isto foi medido não tem fonte de som, por isso o caminho rápido só foi
+  visto a funcionar com sinais injetados.
+
 ## 2026-10-18 — a flor tem duas misturas: paleta fria e cabeça de sementes (`v1su4rt-v18`)
 
 Lote 3. O painel ganhou dois sliders — **Mistura de cor** e **Mistura de forma** — e passou a

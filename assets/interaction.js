@@ -78,6 +78,45 @@
     beat2Refractory: 0.10,
     beat2Decay: 5.5,
 
+    /* S2 — o caminho rápido, no domínio do tempo. Medido com um clique sintético
+       injetado no mesmo AnalyserNode (3 repetições, números idênticos): o espetro só
+       fica visível ao JavaScript aos 10 ms, o waveform aos 2 ms. Estes números detetam
+       o ataque nas amostras de sempre, com um par lowpass/highpass de um polo, e é
+       daqui que sai o INSTANTE do golpe — as bandas de continuam a mandar nas
+       amplitudes. As refractárias são partilhadas com os detetores de espetro de
+       propósito: um golpe não pode disparar duas vezes, porque a segunda dispararia a
+       onda outra vez a meio do curso. */
+    hitSplitHz: 250, // abaixo daqui é grave, acima é agudo
+    /* O golpe tem de fazer UM TOPO NOVO. A primeira versão usava o mesmo par
+       média/desvio dos detetores de espetro e falhou no teste sintético: uma nota
+       corrida está sempre acima da sua própria média (que sobe a 3/s), e re-disparava
+       a cada refractária. Um pico que desce e exige ser ultrapassado por 1,35 não tem
+       esse problema — e continua a apanhar 32-avos, porque entre dois golpes a
+       referência já caiu a pique. */
+    hitHoldFall: 13,   // 1/s: tau ~77 ms da referência que desce
+    hitOver: 1.35,     // o novo topo tem de exceder a referência por isto
+    /* Piso de ruído do caminho rápido, no mesmo espírito do piso das bandas: cai de
+       imediato e sobe devagar. É um MÍNIMO recente, não uma média — e é isso que o
+       torna compatível com música: entre dois golpes o pico volta a cair a zero e o
+       piso vai atrás, enquanto num chiado constante (ventoinha, sala ruim, ganho alto)
+       o mínimo sobe até ao nível do chiado e tapa os falsos disparos. Medido: sem ele,
+       ruído branco a −26 dBFS dava 18 disparos em 3 s. */
+    hitNoiseCrawl: 0.35, // 1/s: quanto o piso sobe por segundo quando nada o puxa para baixo
+    hitNoiseOver: 2.2,   // o golpe tem de valer isto acima do piso
+    // pisos ABSOLUTOS, em fração do fundo da escala do waveform (0..1). Medidos no
+    // mesmo teste: o chiado de sala sintético dá pico 0,061 no agudo e 0,028 no grave,
+    // por isso os pisos ficam acima deles — aqui não há normalização por curso da
+    // banda que os defenda, é o nível cru do microfone.
+    hitFloorLo: 0.12,
+    hitFloorHi: 0.10,
+    // o cintilar é para o que é BRILHANTE. Um passo no ar é banda larga por natureza
+    // (o ataque de um bombo também), por isso cada golpe escolhe um canal, e não os
+    // dois: o grave manda no flash quando o lado de baixo domina (>= basta, é um
+    // empata-desempate), o agudo só é elegível quando domina por margem — o highpass é
+    // ruidoso por construção e um prato tem de se distinguir de um passo. Sem isto, um
+    // kick dava flash e tremelicava ao mesmo tempo, e um prato dava flash.
+    hitBalance: 1.4,
+
     // timbre: centro de massa do espectro em escala log, normalizado entre os dois
     // limites abaixo. É a única leitura que distingue uma flauta de uma guitarra ao
     // mesmo volume, e é ela que vai mandar na mistura de cor quando ela existir.
@@ -160,6 +199,14 @@
       this.beat2Hold = 0;
       this.pulse = 0;
       this.pulse2 = 0;
+      // S2 — picos do caminho rápido e as marcas de que o golpe saiu daqui neste
+      // frame (é o que prende a fase da onda ao instante certo, no shader)
+      this.hitLo = 0;
+      this.hitHi = 0;
+      this.hitLoNoise = 0;
+      this.hitHiNoise = 0;
+      this.hitFlag = false;
+      this.hit2Flag = false;
       // 0,5 é o meio do curso: sem microfone o timbre não desloca nada e a flor
       // comporta-se exatamente como se este canal não existisse
       this.timbre = 0.5;
@@ -375,14 +422,27 @@
 
     update(dt) {
       let L = 0, B = 0, M = 0, T = 0;
+      let pkLo = 0, pkHi = 0;
+      this.hitFlag = false;
+      this.hit2Flag = false;
       if (this.audioOn && this.analyser) {
         const an = this.analyser;
         an.getByteFrequencyData(this.freq);
         an.getByteTimeDomainData(this.wave);
-        let s = 0;
+        /* S2 — uma passagem só serve as duas coisas: a energia do RMS e o pico dos dois
+           lados do corte de um polo. O filtro é o mais barato que há e separa bumbo de
+           prato à primeira ordem de grandeza, que é tudo o que se lhe pede. */
+        const aSplit = 1 - Math.exp(-2 * Math.PI * TUNE.hitSplitHz / this.ctx.sampleRate);
+        let s = 0, lp = 0;
         for (let i = 0; i < this.wave.length; i++) {
           const v = (this.wave[i] - 128) / 128;
           s += v * v;
+          lp += aSplit * (v - lp);
+          const lo = lp < 0 ? -lp : lp;
+          const hi = v - lp;
+          const ah = hi < 0 ? -hi : hi;
+          if (lo > pkLo) pkLo = lo;
+          if (ah > pkHi) pkHi = ah;
         }
         L = clamp(Math.sqrt(s / this.wave.length) * TUNE.levelGain, 0, 1);
         const hz = this.ctx.sampleRate / an.fftSize;
@@ -392,6 +452,19 @@
         const rawTimbre = this._centroid();
         if (rawTimbre >= 0) this.timbreTgt = rawTimbre;
       }
+      // S2 — a referência que desce. Fica FORA do branch do áudio de propósito: assim
+      // cai também nas pausas e com o microfone desligado, em vez de congelar no
+      // último golpe ouvido
+      const hold = Math.exp(-dt * TUNE.hitHoldFall);
+      const refLo = this.hitLo * hold;
+      const refHi = this.hitHi * hold;
+      this.hitLo = Math.max(pkLo, refLo);
+      this.hitHi = Math.max(pkHi, refHi);
+      const crawl = TUNE.hitNoiseCrawl * dt;
+      this.hitLoNoise = Math.min(pkLo, this.hitLoNoise + crawl);
+      this.hitHiNoise = Math.min(pkHi, this.hitHiNoise + crawl);
+      const gateLo = Math.max(TUNE.hitFloorLo, this.hitLoNoise * TUNE.hitNoiseOver);
+      const gateHi = Math.max(TUNE.hitFloorHi, this.hitHiNoise * TUNE.hitNoiseOver);
       // release a 7 (tau ~140 ms): a 4 a nuvem de pontos não cintila com os agudos
       const ease = (cur, target) => cur + (target - cur) * (1 - Math.exp(-dt * (target > cur ? TUNE.attack : TUNE.release)));
       this.sm.level = ease(this.sm.level, L);
@@ -408,10 +481,22 @@
       this.bassAvg += (B - this.bassAvg) * (1 - Math.exp(-dt * TUNE.beatAvgRise));
       this.bassDev += (Math.abs(B - this.bassAvg) - this.bassDev) * (1 - Math.exp(-dt * TUNE.beatDevRise));
       this.beatHold = Math.max(0, this.beatHold - dt);
-      const loudEnough = this.sm.level * this.audioSens > TUNE.beatMinLevel;
+      // o gate usa o máximo entre o RMS cru e o suavizado: o suavizado (tau 36 ms)
+      // chegava atrasado exatamente no instante em que o caminho rápido serve
+      const loudEnough = Math.max(L, this.sm.level) * this.audioSens > TUNE.beatMinLevel;
+      /* S2 — primeiro o caminho rápido (2 ms de waveform contra 10 ms de espetro).
+         Se ele disparar, fecha a refractária e o detetor de espetro abaixo vê o portão
+         fechado e não dispara outra vez sobre o mesmo golpe. São dois detetores a
+         decidir o MESMO instante, não dois flashes. */
+      if (this.beatHold <= 0 && loudEnough && pkLo > gateLo && pkLo >= pkHi && pkLo > refLo * TUNE.hitOver) {
+        this.pulse = 1;
+        this.beatHold = TUNE.beatRefractory;
+        this.hitFlag = true;
+      }
       if (this.beatHold <= 0 && loudEnough && B - this.bassAvg > Math.max(TUNE.beatFloor, this.bassDev * TUNE.beatRatio)) {
         this.pulse = 1;
         this.beatHold = TUNE.beatRefractory;
+        this.hitFlag = true;
       }
       this.pulse *= Math.exp(-dt * TUNE.beatDecay);
 
@@ -423,9 +508,15 @@
       this.trebDev += (Math.abs(T - this.trebAvg) - this.trebDev) * (1 - Math.exp(-dt * TUNE.beat2DevRise));
       this.beat2Hold = Math.max(0, this.beat2Hold - dt);
       const trebleJump = T - this.trebAvg;
+      if (this.beat2Hold <= 0 && loudEnough && pkHi > gateHi && pkHi > pkLo * TUNE.hitBalance && pkHi > refHi * TUNE.hitOver) {
+        this.pulse2 = 1;
+        this.beat2Hold = TUNE.beat2Refractory;
+        this.hit2Flag = true;
+      }
       if (this.beat2Hold <= 0 && loudEnough && trebleJump > Math.max(TUNE.beat2Floor, this.trebDev * TUNE.beat2Ratio)) {
         this.pulse2 = 1;
         this.beat2Hold = TUNE.beat2Refractory;
+        this.hit2Flag = true;
       }
       this.pulse2 *= Math.exp(-dt * TUNE.beat2Decay);
 
@@ -476,6 +567,11 @@
         // o contratempo não passa pela sensibilidade: é um cintilar, e o que o
         // autoriza é a sala estar a dar som (loudEnough), não o slider estar no topo
         pulse2: clamp(this.pulse2, 0, 1),
+        // S1 — "bateu neste frame". Não é uma intensidade, é uma marca de tempo: é o
+        // que faz o shader reiniciar o relógio da onda no instante do golpe em vez de
+        // a apanhar numa fase arbitrária da senoide do relógio corrido.
+        hit: this.hitFlag,
+        hit2: this.hit2Flag,
         // 0,5 sem microfone: o timbre é a única leitura que existe mesmo quando o
         // áudio está desligado, e tem de dizer "neutro" e não "grave" ou "agudo"
         timbre: clamp(this.timbre, 0, 1),
