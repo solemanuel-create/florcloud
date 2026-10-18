@@ -117,6 +117,7 @@ uniform mat4 u_view;
 uniform mat4 u_model;
 uniform mat3 u_normalMat;
 uniform vec3 u_eye;
+uniform vec3 u_light;
 uniform float u_time;
 uniform float u_audio;
 uniform float u_bass;
@@ -132,6 +133,15 @@ uniform float u_maxPx;
 
 varying mediump vec3 v_col;
 varying mediump float v_a;
+/* B1 — o sprite deixa de ser um disco. v_rot é a direção do eixo MAIOR da elipse,
+   medida em unidades do gl_PointCoord, e v_e é o quanto ela está esticada nesse eixo.
+   O fragmento mede a distância com os dois, dentro da caixa de sempre: semieixos
+   (0,5, 0,5/e²), área a do disco a dividir por e². A compensação que devolve ao ponto
+   a luz que a área perdeu está no vértice (o par foot0/foot1), não aqui: não é um favor
+   ao orçamento — é a razão de existir do parâmetro, porque um sprite alongado que
+   somasse luz seria a flor a estourar. */
+varying mediump vec2 v_rot;
+varying mediump float v_e;
 
 void main() {
   vec3 p = a_pos;
@@ -152,8 +162,20 @@ void main() {
   float breath = mix(u_treble, u_bass, xover) * 0.10;
   float shimmer = sin(p.y * 18.0 + u_time * 3.0 + r * 12.0) * u_mid * 0.012;
   float sway = sin(az * 6.0 + u_time * 2.2) * u_mid * 0.035;
+  /* C1 — dobra das lâminas em tempo real. O open * 0.42 * r de cima é linear no
+     raio: a pétala sobe inteira, como uma tábua articulada na base. Este termo é
+     quadrático, por isso levanta só as pontas — é o que uma corola faz quando abre a
+     sério, e é ele que muda a silhueta de taça aberta a copo fechado ao longo de uma
+     música. Vai todo nos graves porque são eles que abrem a flor. */
+  float bend = u_bass * 0.13 * r * r;
+  /* C2 — onda que corre À VOLTA da corola, ao longo da normal da superfície. O sway
+     também corre em azimute, mas mexe só na altura; este mexe na espessura da lâmina,
+     por isso lê-se como um calafrio que a atravessa e não como a flor a abanar.
+     Vem ponderado por floral: caule e folhas ficam quietos. */
+  float roll = sin(az * 3.0 + r * 5.0 - u_time * 1.1) * u_mid * 0.022 * floral;
   p.xz += dir * (open + breath) * r * 0.55;
-  p.y += ripple + open * 0.42 * r + shimmer + sway * (0.25 + r);
+  p.y += ripple + open * 0.42 * r + bend + shimmer + sway * (0.25 + r);
+  p += a_norm * roll;
 
   // fragmentação em fumo: só os graves fortes descolam pontos, e sempre da borda
   // para dentro, porque é a borda que pertence aos graves
@@ -187,13 +209,62 @@ void main() {
   gl_Position = clip;
   float depth = max(clip.w, 0.05);
 
+  // os pontos da borda são maiores que os do miolo: a corola cobre mais frame sem
+  // empilhar mais luz no centro, que é onde tudo se acumula
+  /* C4 — chuto de tamanho na batida. Um ponto que cresce é a flor a inchar, e é a
+     leitura mais antiga de um VJ: no ataque as pétalas ganham volume. O chuto entra
+     na caixa dos dois eixos, por isso a luz por ponto teria de cair com o quadrado
+     do ganho — é a compensação de área mais abaixo que o faz, e ela é obrigatória:
+     sem ela o mesmo watt lido em mais pixels é tinta, não luz.
+       box0: a caixa de repouso, exatamente como era antes deste lote. box1: a caixa
+     com o chuto, que é a que se rasteriza e, portanto, a que B1 tem de resolver
+     dentro. Vem para antes da luz porque o achatamento de B1 é limitado pelo número
+     de pixels que box1 realmente tem. */
+  float kick = 1.0 + u_pulse * 0.20;
+  float px = (0.0285 + 0.010 * frag * age + 0.006 * a_seed.z) * (0.82 + 0.40 * r) * u_size / depth;
+  float box0 = clamp(px * (0.75 + 0.25 * u_cloud), 1.0, u_maxPx);
+  float box1 = min(box0 * kick, u_maxPx);
+  gl_PointSize = max(box1, 1.0);
+
   vec3 N = normalize(u_normalMat * a_norm);
   vec3 V = normalize(u_eye - world.xyz);
-  vec3 L = normalize(vec3(0.45, 0.85, 0.35));
+  /* B2 — a luz vinha num vetor fixo aqui dentro. Agora vem em u_light, já
+     normalizada: o renderizador faz-lhe uma órbita lenta de ±15° em torno do eixo Y e
+     puxa-lhe a elevação pela inclinação do aparelho. As nervuras passam a acender de
+     um lado e do outro, que é como uma flor se lê quando se roda à volta dela. */
+  vec3 L = u_light;
   float diff = max(dot(N, L), 0.0);
   float face = abs(dot(N, V));
   float trans = pow(max(dot(-N, L), 0.0), 3.0);
   float fres = pow(1.0 - face, 3.0);
+
+  /* B1 — a elipse. Uma lâmina inclinada projeta-se em elipse achatada na direção do
+     seu achatamento, que é a projeção da normal; o eixo MAIOR é o perpendicular a ela.
+     O y do gl_PointCoord cresce para baixo e o do espaço de visão para cima, por isso
+     o -Nv.y: sem esse sinal a elipse ficaria espelhada a 2·ângulo do sítio certo. */
+  vec3 Nv = normalize((u_view * vec4(N, 0.0)).xyz);
+  vec2 pn = normalize(vec2(Nv.x, -Nv.y) + vec2(0.0001, 0.0));
+  v_rot = vec2(-pn.y, pn.x);
+  /* 1/face era o achatamento geométrico exato, e é ele que persegue o sprite. A
+     compensação de área só faz o que diz enquanto a elipse tiver pixels suficientes
+     para ser amostrada: num sprite de 2×2 as quatro amostras caem todas a meia
+     distância da caixa, pelo que o achatamento dá dois resultados extremos e nenhum
+     meio — eixo maior alinhado com as amostras, a soma amostrada fica igual à do
+     disco e o alpha multiplicado por e² é luz a mais; eixo maior a 45°, as quatro
+     amostras caem fora da elipse e o ponto apaga-se. É a fase de raspão que tem mais
+     pontos quase de frente para o nada e mais pontos pequenos, por isso o erro
+     empurra justamente o mínimo do frame para cima. As duas primeiras versões deste
+     lote — a caixa a crescer por e, depois a caixa fixa com alpha ×e² — apareceram
+     mais claras do que esta em todas as medidas que se fez delas, e é por isso que
+     nenhuma ficou.
+     O chão é o número de pixels, não a área ideal: só se achata o eixo menor que
+     ainda tenha dois pixels depois de achatado, e² ≤ box1/2. Com isso os pontos de
+     um e dois pixels ficam disco (nada de amostra a dividir por dois), os de quatro
+     ganham até 1,41 e só os grandes, as orlas e os filetes, chegam ao teto de 1,6.
+     Medido no centro do frame ao longo de uma volta, com o microfone calado: 82,3 de
+     mediana no build de referência, 82,4 neste lote com a elipse desligada, 80,3 com
+     a porta — a elipse custa 2,5% de luz e nunca soma. */
+  v_e = clamp(min(1.0 + (1.0 / max(face, 0.40) - 1.0) * 0.5, sqrt(max(box1 * 0.5, 1.0))), 1.0, 1.6);
   // Cada ponto cintila: os agudos dão a frequência e o centro da corola a intensidade.
   // O contratempo não alarga a oscilação — isso empurrava o fator para negativo e
   // apagava pontos — mete-lhe um segundo harmónico por cima: o waveform fica mais
@@ -248,16 +319,23 @@ void main() {
   // entraria na janela da névoa e apagaria. 3,5 é a distância de referência do desenho.
   float fog = 1.0 - smoothstep(3.2, 4.6, depth * (3.5 / u_eye.z)) * 0.82;
 
-  // os pontos da borda são maiores que os do miolo: a corola cobre mais frame sem
-  // empilhar mais luz no centro, que é onde tudo se acumula
-  float px = (0.0285 + 0.010 * frag * age + 0.006 * a_seed.z) * (0.82 + 0.40 * r) * u_size / depth;
-  gl_PointSize = clamp(px * (0.75 + 0.25 * u_cloud), 1.0, u_maxPx);
+  /* Compensação de área — a conta que o chuto (C4) e a elipse (B1) obrigam a fazer,
+     e feita com a área que se PINTA, não com a área ideal do desenho. Um sprite não
+     vale menos que um pixel: um ponto de um pixel não pode ficar com metade dele
+     apagado, pode no máximo deixar de brilhar mais; e uma amostra de um perfil
+     achatado não vale menos que o valor do perfil no centro. As duas primeiras
+     versões deste lote caíram exatamente aí (ver a nota de B1, no achatamento):
+     o mínimo do frame subiu em vez de descer.
+       foot0: disco, na caixa de repouso. foot1: elipse, na caixa do chuto.
+       0,7854 é π/4, a razão entre a área da elipse e a da caixa quadrada. */
+  float foot0 = max(0.7854 * box0 * box0, 1.0);
+  float foot1 = max(0.7854 * box1 * box1 / (v_e * v_e), 1.0);
 
   // envelope com pico em age 0,238 e energia conservada ao dividir por ex^2; o
   // termo de incidência faz a pétala virada a quem vê ser mais opaca que a borda,
   // que se acumula com as vizinhas até ao brilho de orla
   float e = pow(max(age, 0.002) / 0.238, 0.5) * pow(max(1.0 - age, 0.002) / 0.762, 1.6);
-  float alpha = e / (ex * ex);
+  float alpha = e / (ex * ex) * (foot0 / foot1);
   float thin = mix(0.55, 1.0, face * face);
   // afino do centro: só na corola, porque é ali que as cinco voltas, o miolo e os
   // filetes se sobrepõem na projeção; caule e folhas (floral 0) ficam intactos.
@@ -275,12 +353,22 @@ precision mediump float;
 
 varying mediump vec3 v_col;
 varying mediump float v_a;
+varying mediump vec2 v_rot;
+varying mediump float v_e;
 
 void main() {
+  /* B1 — a distância ao centro passa a distância à orla de uma elipse. Roda-se o
+     quadro do ponto para o eixo maior (v_rot) e multiplica-se por (1, e²), que é
+     exatamente medir uma elipse de semieixos (0,5, 0,5/e²) dentro da caixa de sempre.
+     A área pintada é a do disco dividida por e², e é por isso que o vértice sobe o
+     alpha na mesma razão: mesma luz por ponto, distribuída por um traço em vez de um
+     grão. A conta dessa subida é feita com chão de um pixel — ver a nota do C4. */
+  vec2 q = gl_PointCoord - vec2(0.5);
+  vec2 q2 = vec2(q.x * v_rot.x + q.y * v_rot.y, -q.x * v_rot.y + q.y * v_rot.x);
+  float d = length(q2 * vec2(1.0, v_e * v_e));
   // sprite de núcleo quase chato e orla suave: a quatro pixels um disco plano e um
   // gaussiano são indiferenciáveis, mas o núcleo chato leva o dobro e meio da luz
   // por ponto, que é o que faz a corola inteira ver-se e não só o miolo
-  float d = length(gl_PointCoord - vec2(0.5));
   float f = 1.0 - smoothstep(0.30, 0.50, d);
   float a = f * v_a;
   if (a < 0.004) discard;

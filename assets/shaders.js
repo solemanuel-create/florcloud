@@ -419,6 +419,8 @@
   let time = 0;
   let timeScale = 1;
   let spin = 0;
+  let spinVel = 0; // C5: a rotação tem inércia, ver drawFlower()
+  let prec = 0; // C5: ângulo de precessão do eixo da flor
   let lastFrameTime = 0;
 
   // vida média de um ponto, em segundos. O ciclo é feito no CPU e entregue como
@@ -443,6 +445,34 @@
 
   const eye = [0, 0, FRAME.eyeZ];
   let camLift = 0;
+
+  /* B2 — a luz era um vetor fixo dentro do shader, por isso a flor tinha sempre a
+     mesma cara iluminada. Passa a vir em `u_light` e a mover-se aqui. Os dois ângulos
+     abaixo são exatamente a direção antiga — (0,45, 0,85, 0,35) normalizada — escrita
+     em azimute e elevação, para se poder orbitar sem sair do mesmo cone de luz: no
+     frame zero a incidência é a que foi desenhada e medida.
+     `orbitAmp` de ±15° dá às nervuras tempo para acenderem de um lado e do outro, e
+     `tiltPull` faz a elevação acompanhar o braço de quem segura o aparelho. O período
+     (~2 min) é da ordem de grandeza de uma música: quem ouvir três faixas não vê a
+     mesma luz duas vezes, e não há um ciclo visível a sobrepor-se ao da rotação. */
+  const LIGHT = {
+    azim: 0.9095, // atan2(0,45, 0,35)
+    elev: 0.9798, // asin(0,85 / 1,02347)
+    orbitAmp: 0.2618, // 15° em radianos
+    orbitHz: 0.05, // rad/s: período de ~126 s
+    tiltPull: 0.18, // rad de elevação por unidade de inclinação
+  };
+  const light = [0, 0, 0];
+
+  function lightDir(t, tiltY) {
+    const az = LIGHT.azim + LIGHT.orbitAmp * Math.sin(t * LIGHT.orbitHz);
+    const el = LIGHT.elev + LIGHT.tiltPull * clamp(tiltY, -1, 1);
+    const c = Math.cos(el);
+    light[0] = c * Math.sin(az);
+    light[1] = Math.sin(el);
+    light[2] = c * Math.cos(az);
+    return light;
+  }
 
   const proj = new Float32Array(16);
   const view = new Float32Array(16);
@@ -571,7 +601,7 @@
       FRAGMENT_POINTS,
       ['a_pos', 'a_norm', 'a_col', 'a_seed', 'a_rad', 'a_band'],
       [
-        'u_proj', 'u_view', 'u_model', 'u_normalMat', 'u_eye', 'u_time', 'u_audio', 'u_bass',
+        'u_proj', 'u_view', 'u_model', 'u_normalMat', 'u_eye', 'u_light', 'u_time', 'u_audio', 'u_bass',
         'u_mid', 'u_treble', 'u_pulse', 'u_pulse2', 'u_timbre', 'u_phase', 'u_cloud', 'u_size', 'u_maxPx',
       ],
       'nuvem'
@@ -728,8 +758,22 @@
     // intensidade a zero: nem se envia o draw call
     if (state.cloud <= 0.001) return;
 
-    // as batidas dão um empurrão na rotação: a flor acelera e volta ao ritmo
-    spin += dt * timeScale * (0.10 + state.audio * 0.22 + state.pulse * 0.45);
+    /* C5 — a rotação passa a ter inércia. Antes a velocidade era uma função
+       instantânea do estado do som, por isso o empurrão de uma batida durava o que
+       dura a batida: ~60 ms. Com a mola (tau ~1/2,2 s) o ataque põe a flor a rodar
+       mais depressa e ela regressa ao ritmo a meio caminho entre duas batidas, que é
+       o que faz um compasso ouvir-se como uma coisa só e não como um tremor. */
+    const spinTarget = 0.10 + state.audio * 0.22 + state.pulse * 0.45;
+    spinVel += (spinTarget - spinVel) * (1 - Math.exp(-dt * 2.2));
+    spin += dt * timeScale * spinVel;
+
+    /* C5 — precessão: o eixo da flor deixa de estar parado. Os médios, que são o
+       corpo da música, fazem o eixo descrever um cone de ±2° no teto (0,035 rad). É
+       pouco de propósito: a 4° a corola já balança como um boneco e perde a leitura
+       de flor; a 2° ganha-se o movimento de uma coisa viva sem descolar a silhueta. */
+    prec += dt * (0.35 + state.mid * 1.1);
+    const wob = 0.018 + 0.017 * state.mid;
+
     const tx = clamp(state.tiltX, -1.2, 1.2);
     const ty = clamp(state.tiltY, -1.2, 1.2);
 
@@ -738,9 +782,9 @@
     const s = 0.82 * (0.98 + state.audio * 0.04 + state.pulse * 0.02);
     mat4Scale(model, s, s, s);
     mat4RotateY(rot, spin); mulLeft(model, rot);
-    mat4RotateZ(rot, tx * 0.25); mulLeft(model, rot);
+    mat4RotateZ(rot, tx * 0.25 + wob * Math.cos(prec)); mulLeft(model, rot);
     // os graves fazem a flor inclinar-se para a frente
-    mat4RotateX(rot, 1.02 + ty * 0.25 - state.bass * 0.10); mulLeft(model, rot);
+    mat4RotateX(rot, 1.02 + ty * 0.25 - state.bass * 0.10 + wob * Math.sin(prec)); mulLeft(model, rot);
     mat4Translate(rot, 0, 0.04 + camLift, 0); mulLeft(model, rot);
 
     const p = progPoints;
@@ -750,6 +794,8 @@
     gl.uniformMatrix4fv(p.uniform.u_model, false, model);
     gl.uniformMatrix3fv(p.uniform.u_normalMat, false, mat3FromMat4(normalMat, model));
     gl.uniform3f(p.uniform.u_eye, eye[0], eye[1], eye[2]);
+    const L = lightDir(time, ty);
+    gl.uniform3f(p.uniform.u_light, L[0], L[1], L[2]);
     gl.uniform1f(p.uniform.u_time, time);
     gl.uniform1f(p.uniform.u_audio, state.audio);
     gl.uniform1f(p.uniform.u_bass, state.bass);

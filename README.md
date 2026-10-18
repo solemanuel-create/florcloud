@@ -11,14 +11,14 @@ O espectro é mapeado pelo **raio da flor**: a borda pertence aos graves, o cent
 | Entrada | Efeito no fundo | Efeito na flor |
 | --- | --- | --- |
 | Volume | ondas a partir do centro, brilho | abre todas as pétalas e sobe a exposição |
-| Graves | amplitude da deformação | endireita a corola, ondula a borda, e acima de 0,28 **descola pontos da borda para dentro, que sobem e se desfazem em fumo colorido** |
-| Médios | deslocamento de cor | onda que corre à volta das pétalas e realce na orla |
+| Graves | amplitude da deformação | endireita a corola, ondula a borda, **levanta só as pontas das pétalas** (curva em `r²`: a base quase não mexe, e é isso que faz a silhueta passar de taça a copo), e acima de 0,28 **descola pontos da borda para dentro, que sobem e se desfazem em fumo colorido** |
+| Médios | deslocamento de cor | **calafrio que atravessa a espessura da lâmina** (rolamento ao longo da normal), onda que corre à volta das pétalas, realce na orla, e **acelera a precessão** do corpo |
 | Agudos | encurta o comprimento de onda do fundo e levanta o grão | acende o miolo, faz cintilar os pontos da corola e tremelicar as orlas, sem somar luz |
-| Batidas (grave) | flash | onda que viaja da borda ao centro e um empurrão na rotação |
+| Batidas (grave) | flash | onda que viaja da borda ao centro, empurrão na rotação **e no tamanho do ponto** (compensado na área, para não somar luz) |
 | Contratempos (agudos) | — | **segundo harmónico no cintilar**: o waveform fica mais denso e irregular, com a mesma luz média |
 | Timbre (que som é) | — | desloca a fronteira grave/agudo na corola: som escuro põe os graves mais para dentro |
 | Toque no ecrã | flash | idêntico a uma batida de grave — é o que mantém o ritmo vivo sem microfone |
-| Giroscópio | move o centro das formas (a pose do aparelho re-centra-se sozinha em ~10 s) | inclina a flor em 3/4 |
+| Giroscópio | move o centro das formas (a pose do aparelho re-centra-se sozinha em ~10 s) | inclina a flor em 3/4 **e puxa a elevação da luz** (a flor acende do lado para onde se inclina) |
 | Mouse / toque | mesmo efeito do giroscópio | mesmo efeito do giroscópio, para telas sem sensor |
 
 Cada banda do espectro **normaliza-se sozinha**: um piso de ruído que cai de imediato e sobe devagar, um envelope de pico que se deixa cair devagar, e a escala entre os dois. Por isso a reação não depende de calibrar ganhos para a música de cada casa, e um quarto silencioso não faz a flor piscar. O curso mínimo por banda é o que impede o silêncio de ser amplificado até ao teto; o `beatMinLevel` é o que exige que uma batida seja alta de verdade, e não apenas um sobressalto da média — e é por isso que o contratempo dos agudos partilha essa mesma porta: o que autoriza um flash é a sala dar som, não o microfone ouvir o próprio chiado.
@@ -26,6 +26,12 @@ Cada banda do espectro **normaliza-se sozinha**: um piso de ruído que cai de im
 Há **dois detetores de ataque independentes**, um sobre os graves e outro sobre os agudos, cada um com limiar e refratário próprios. Um bombo dá flash; uma palma ou um prato fechado dão o cintilar mais fundo. As bandas só dizem *quanta* energia há em cada zona; o **timbre** (centro de massa do espectro, em escala log) é o que distingue uma flauta de uma guitarra ao mesmo volume.
 
 O contraste da corola vem da luz por ponto: cada ponto é iluminado pela sua própria normal, com uma face clara, uma sombra funda (`0,02` contra `2,30`), a luz que atravessa a pétala fina por detrás e a orla acesa quando o ponto está visto de topo. É isso que faz a nuvem ler como pétalas translúcidas e não como mancha.
+
+Essa luz tem agora uma direção própria — o uniforme `u_light`, calculado em `lightDir()` a partir do bloco `LIGHT` em `assets/shaders.js`. Os seus azimute e elevação de origem reproduzem exatamente a direção que estava escrita no shader, por isso o frame de repouso não mudou; o que se ganhou é a órbita lenta (±15° em ~2 min) e o puxão de elevação que segue a inclinação de quem segura o aparelho.
+
+Cada ponto é **achatado na direção da sua pétala**, para que uma face vista de topo ocupe uma faixa e não um círculo. O detalhe que torna isto seguro é a porta de pixels: o alongamento só acontece enquanto o eixo menor continua acima de ~2 px. Um sprite não é uma área, é um punhado de amostras, e num ponto de 2×2 achatar sem porta ou apaga o ponto ou soma luz — o oposto do que se quer numa flor que já está no teto de brilho. A mesma lógica obriga o empurrão de tamanho das batidas a sair compensado no alpha (`foot0`/`foot1`), para a flor ganhar movimento sem ganhar watts.
+
+O giro da flor tem inércia: `spinVel` persegue o alvo com uma mola, por isso a corola continua a acelerar e a abrandar depois de o som já ter mudado; e o seu eixo precessiona ±1–2°, mais depressa com os médios.
 
 O slider **Intensidade da nuvem de pontos** é um ganho sobre a nuvem toda, levado ao shader pelo uniforme `u_cloud`: `0` apaga a flor (fica só o fundo), `1` é o valor desenhado, `2` duplica o brilho e dá um quarto mais de tamanho a cada ponto. Não altera o fundo. No console: `v1su4rtShaders.setCloudIntensity(0.5)`.
 
@@ -79,6 +85,8 @@ O `service-worker.js` é servido com `no-store` para o Vercel não o cachear e p
 | Cor, luz, contraste, transparência, tamanho dos pontos, fumo, fundo | [`assets/shaders.glsl.js`](assets/shaders.glsl.js) — texto GLSL puro |
 | Forma da flor: voltas, pétalas, folhas, densidade da nuvem | [`assets/shaders.js`](assets/shaders.js) — `WHORLS`, `LEAVES`, `buildCloud()` |
 | Enquadramento: FOV, distância da câmara, recuo e subida em retrato | [`assets/shaders.js`](assets/shaders.js) — bloco `FRAME` |
+| Luz do direcional: direção de origem, órbita, puxão da inclinação | [`assets/shaders.js`](assets/shaders.js) — bloco `LIGHT` e `lightDir()` |
+| Inércia do giro e precessão do eixo | [`assets/shaders.js`](assets/shaders.js) — `drawFlower()` |
 | Bandas de frequência, portas, suavização, batida, contratempo, timbre, giroscópio | [`assets/interaction.js`](assets/interaction.js) — bloco `TUNE` |
 | Painel, sliders, tela cheia, medidor, avisos do microfone | [`assets/app.js`](assets/app.js) |
 | Layout responsivo do painel | [`assets/styles.css`](assets/styles.css) |
@@ -110,6 +118,8 @@ Ordem de carregamento: `shaders.glsl.js` → `shaders.js` → `interaction.js` �
 - **Microfone sem reação:** olhe primeiro para o **medidor** abaixo dos botões. Se ele não se mexer, o problema é a captura (permissão, HTTPS, ou o microfone errado no sistema) e não o shader — ao fim de 5 s sem sinal o painel diz isso mesmo. Se ele mexer e a flor não, aumente **Sensibilidade áudio**.
 - **A flor pisca sozinha num quarto silencioso:** não devia acontecer (as bandas só sobem com sinal acima do seu curso mínimo). Se acontecer, suba `beatFloor`/`beatMinLevel` no bloco `TUNE`.
 - **Palmas e pratos não se veem:** o cintilar dos agudos é discreto de propósito (não soma luz ao frame). Se não notar nada, suba **Sensibilidade do áudio**; se ainda assim não chegar, desça `beat2Floor` ou suba `beat2Ratio` em `TUNE` — o primeiro deixa entrar mais golpes, o segundo exige saltos maiores.
+- **A flor não fica mais clara quando toca música:** é contrato, não avaria. Com o microfone no teto a flor pode chegar a ~1,8× o brilho do silêncio e não passa disso: os termos de áudio que cintilam são médios-preservantes (`spark`, `hatFlick`) e o empurrão de tamanho das batidas é devolvido no alpha. Se uma mexida nova somar luz ao frame, ela vai bater nesse teto e estourar em branco nas orlas.
+- **Pontos minúsculos apagam-se ou tremem no celular:** não mexa na elipse de `v_rot`/`v_e` sem a porta de pixels (`e² ≤ box1/2`). Num sprite de 2×2 as quatro amostras caem todas no meio-raio: com o eixo maior alinhado com as amostras, o reforço de alpha passa a ser luz pura somada; a 45°, as quatro caem fora da elipse e o ponto fica preto. É por isso que o alongamento depende do tamanho real em pixels e não só do `face`.
 - **A flor volta a centrar-se sozinha depois de inclinar o aparelho:** é a re-centragem da pose (`orientRecenter`), para segurar o celular de lado não deixar a corola pendurada para sempre. Para voltar ao comportamento antigo, ponha `orientRecenter: 0`; para que a pose se apague mais depressa, suba o valor.
 - **Microfone negado e a flor muda de cor/ritmo mesmo assim:** bata no ecrã — o toque entra pelo mesmo canal da batida de grave. Não move o medidor nem o vigia de sinal, que só veem o microfone.
 - **Flor cortada nas pontas em retrato:** o `reach` do bloco `FRAME` ficou abaixo do tamanho real da corola depois de mexer em `WHORLS`. Aumente `reach`, ou diminua `fill`.

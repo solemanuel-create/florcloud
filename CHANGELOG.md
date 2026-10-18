@@ -4,6 +4,57 @@ Formato seguido: uma entrada por mudança de visual ou de estrutura, com o `CACH
 correspondente do `service-worker.js` — é ele que diz ao browser para deitar fora a
 versão guardada.
 
+## 2026-10-17 — a flor viva: sprite elíptico, luz que anda, giro com inércia (`v1su4rt-v17`)
+
+Lote 2. A flor deixa de ser um objeto que respira e passa a ser um objeto que se move por
+dentro: a luz contorna, as pétalas se achatam de acordo com o ângulo em que são vistas, o
+giro tem massa e o contratempo empurra o tamanho. Nada aqui toca a escuta nem aos controlos.
+
+- **B1 — o sprite deixa de ser um disco.** Cada ponto é achatado na direção do eixo maior da
+  sua pétala, que vem da normal transformada à tela (`v_rot`, `v_e`), então uma face virada
+  de topo ocupa uma faixa e não um círculo. O efeito colateral era o problema: **um sprite
+  não é uma área, é um punhado de amostras.** Num ponto de 2×2 as quatro amostras caem todas
+  no meio-raio, então achatar dá dois extremos e nada entre eles — eixo alinhado com as
+  amostras, a soma vale a do disco e o reforço de alpha é luz pura somada; eixo a 45°, as
+  quatro caem fora e o ponto apaga. Por isso o alongamento tem **porta de pixels**: `v_e` só
+  passa de 1 quando o eixo menor continua com 2 px (`e² ≤ box1/2`). Abaixo disso o ponto é
+  um pixel e um pixel não pode valer menos que meio aceso — no máximo deixa de brilhar mais.
+- **B2 — `u_light`, o direcional que anda.** A luz do fragmento era uma constante escrita no
+  GLSL. Agora é um uniforme alimentado por `lightDir()` em `shaders.js`: azimute 0,9095 e
+  elevação 0,9798 — os mesmos números do `normalize(vec3(0.45, 0.85, 0.35))` de antes, então
+  o frame de repouso é idêntico — com órbita de ±15° a 0,05 Hz (~2 min por volta) e um puxão
+  de inclinação proporcional ao tom (`tiltPull 0.18`). Custar um uniforme é o preço de a
+  flor ter um sol em vez de uma luminária fixa.
+- **C1/C2 — dois movimentos novos.** O baixo agora curva os filetes com um `bend` quadrático
+  em `r` (`u_bass * 0.13 * r * r`), que dobra a ponta e não a base; os médios mandam um
+  `roll` viajante ao longo da normal (`sin(az*3 + r*5 - t*1.1)`), que faz a corola ondular
+  em vez de apenas escalar.
+- **C4/C5 — tamanho com empurrão e giro com massa.** O `kick` do pulso entra no
+  `gl_PointSize` e, porque tamanho é área, sai compensado no alpha pelo par `foot0/foot1` —
+  a conta é feita com a área que se pinta, não com a área ideal do desenho. O giro ganhou uma
+  mola (`spinVel` persegue o alvo com `1 - exp(-dt*2,2)`) e uma precessão de ±1–2° que
+  acelera com os médios: a flor agora continua a andar depois do som já ter parado.
+- **O que se mediu, e o que se teve de medir de novo.** A pergunta do lote era se a elipse
+  soma luz ao frame — com microfone no teto o teto é ~1,8× o brilho do silêncio. Método:
+  recorte central de 160×160 por `readPixels` dentro de um callback de `requestAnimationFrame`
+  registado **depois** do da aplicação, 5 Hz, 62 s, com os sete canais de áudio forçados a 0
+  e `u_light` fixado na constante antiga. Resultados a `cloud = 2,00`, 489×431, mediana:
+  **82,25** no build de referência v16, **82,4** neste lote com a elipse desligada, **80,3**
+  com a porta. A elipse custa **2,5% de luz e nunca soma**, que é o contrato cumprido. A
+  `cloud = 1,00` o build com porta mede **40,15** (mín 36,48 / p10 37,07 / p90 41,24 / máx
+  41,69); a comparação com o v16 nessa configuração **não vale**, pelo motivo abaixo.
+- **Três armadilhas de medida que invalidaram números anteriores.** (1) `tuneQuality()` baixa
+  `quality` quando a média cai abaixo de 40 fps, e isso muda ao mesmo tempo a resolução
+  interna e `Math.round(points.count * quality)` pontos; (2) os dois builds precisam de ser
+  servidos pela mesma origem, senão um tem microfone e o outro não; (3) o slider
+  `#cloud-intens` estava em 2 e **mexeu-se durante a corrida**. Os "+68%", "+67%" e "+56%"
+  que chegaram a estar escritos nos comentários do shader nasceram aí e foram todos
+  apagados. Lição que fica: nenhum número deste projeto vale sem a resolução, o número de
+  pontos e a posição dos sliders ao lado dele.
+- **Ainda não verificado:** celular, tablet e a Vercel. As medidas acima são de um desktop a
+  489×431; a porta de 2 px é desenhada exatamente para o aparelho pequeno, e é nele que o
+  lote tem de ser julgado.
+
 ## 2026-10-17 — o andaime: conferência estática, menos layout por frame, nuvem com semente (`v1su4rt-v16`)
 
 Nada aqui muda a flor. É o lote que decide se o resto do projeto é fácil de mexer, e o

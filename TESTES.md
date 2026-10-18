@@ -22,6 +22,14 @@ Com **Ativar interações** ligado e música com grave e agudo separáveis:
 - [ ] **Agudos**: o miolo acende e os pontos da corola cintilam mais depressa; as **orlas/pontas das pétalas tremelicam** sem que a flor inteira fique mais clara (a média de luz não muda).
 - [ ] **Palmas / estalidos / prato fechado** (ataque sem bombo): as orlas ficam mais densas e irregulares por uma fração de segundo. A flor **não** dá flash de fundo — é o contratempo, não a batida.
 - [ ] **Timbre**: uma nota grave sostenida e uma nota aguda sostenida, ao mesmo volume, põem a borda acesa em sítios diferentes da corola. A música passa a ler-se por *que* som é, não só por quanto som há.
+- [ ] **Elipse das pétalas (B1)**: em 3/4, uma pétala vista quase de topo aparece como uma **faixa** de pontos e não como um círculo de pontos. Aproxime com **Intensidade da nuvem** em 1 e depois em 2: os pontos pequenos **não apagam** nem piscam a preto — é a porta de 2 px.
+- [ ] **Orçamento de luz (B1/C4)**: com a flor em movimento, o centro nunca estoura em branco e, em silêncio, a imagem volta ao mesmo nível de brilho de sempre. Se a flor ficar visivelmente mais clara com música do que sem, pare e meça antes de commitar.
+- [ ] **Luz que anda (B2)**: deixe a flor ~2 min em silêncio e repare que as nervuras acendem primeiro de um lado e depois do outro, sem ciclo visível a competir com a rotação. Inclua o aparelho (ou o mouse) para cima e para baixo: a elevação da luz acompanha, e a flor acende do lado para onde pende.
+- [ ] **Dobra das pontas (C1)**: com grave forte, as pontas das pétalas levantam-se **antes** da base (silhueta passa de taça a copo); ao parar o grave, a base volta a descer primeiro.
+- [ ] **Calafrio (C2)**: com música de médios ricos, uma ondulação percorre a espessura das lâminas à volta da corola. O caule e as folhas ficam quietos — é ponderado por `floral`.
+- [ ] **Empurrão de tamanho (C4)**: nas batidas os pontos crescem por um instante e voltam; o brilho global **não** sobe com o crescimento.
+- [ ] **Giro com inércia e precessão (C5)**: ao parar a música, a rotação abranda em vez de parar seco (a mola é de ~0,45 s); com médios, o eixo da flor descreve um cone de ±1–2° — pouco, para a silhueta não descolar.
+
 - [ ] **Bater no ecrã** dá exatamente o flash de uma batida de grave (mesma luz, mesmo decaimento). Teste **com o microfone negado**: continua a dar.
 - [ ] Bater no ecrã **não** mexe no medidor nem faz o vigia de sinal calar — o dedo não finge que há som.
 - [ ] **Giroscópio**: incline o aparelho e segure-o assim 15–30 s → a flor volta a centrar-se devagar, ficando a pender pouco (8° de banda morta). Um gesto rápido de 0,5 s usa o curso todo e não é apagado.
@@ -61,6 +69,7 @@ Em DevTools → modo dispositivo (ou redimensionando a janela):
 - [ ] **Ativar interações**: aceitar microfone; o visual reage ao som.
 - [ ] Inclinar o aparelho move o centro das formas; deitar o celular continua coerente.
 - [ ] Sliders mudam a intensidade na hora (valores mostram 2 casas, ex. 1.50).
+- [ ] **Pontos pequenos no celular**: com a resolução interna a cair sozinha (apareço fraco) e **Intensidade da nuvem** em 0,5, a flor não ganha buracos pretos nem orlas a piscar — é a porta de pixels da elipse a segurar o eixo menor em 2 px.
 - [ ] Arrastar o dedo na tela move o centro.
 
 ## 4. iOS (Safari, HTTPS)
@@ -88,3 +97,4 @@ Em DevTools → modo dispositivo (ou redimensionando a janela):
 - [ ] Desregistar o service worker e limpar as caches antes de reabrir a página no navegador de testes: sem isso fica a versão velha e a conclusão não vale.
 - [ ] Hard reload (Ctrl+Shift+R) no desktop; no celular, fechar e reabrir o app.
 - [ ] `git status` antes de commitar.
+- [ ] **Medir luz entre builds** exige as duas mãos na porta: os sete canais de áudio fixados em 0, `u_light` na constante de origem, `#cloud-intens` **verificado e igual** nos dois lados, e resolução interna e número de pontos registados ao lado do número — `tuneQuality()` mexe nos dois últimos sozinho quando o fps cai. Uma comparação sem esses valores não vale nada: foi assim que três números anteriores se deitaram fora.
