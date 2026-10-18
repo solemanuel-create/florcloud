@@ -122,7 +122,7 @@
   const SPACING = 0.0138; // distância média entre pontos, em unidades de mundo
 
   function newCloud() {
-    return { pos: [], norm: [], col: [], seed: [], rad: [], band: [] };
+    return { pos: [], norm: [], col: [], seed: [], rad: [], band: [], posB: [] };
   }
 
   function gridFor(area, aspect) {
@@ -180,6 +180,7 @@
       const j = Math.floor(rnd() * (i + 1));
       if (j !== i) {
         swapArr(g.pos, i, j, 3);
+        swapArr(g.posB, i, j, 3);
         swapArr(g.norm, i, j, 3);
         swapArr(g.col, i, j, 3);
         swapArr(g.seed, i, j, 3);
@@ -188,6 +189,48 @@
       }
     }
     return g;
+  }
+
+  /* B4 — a segunda casa de cada ponto: a cabeça de sementes.
+
+     É o espiral de Vogel: o slot s recebe raio HEAD.r·√(s/N) e ângulo s·137,507°. É
+     a construção que faz um disco de sementes mostrar espirais nos dois sentidos, e
+     por isso foi escolhida em vez de anéis regulares: anéis lêem-se como um radar,
+     o espiral lê-se como uma flor.
+
+     O índice não é a ordem de construção, é o RAIO na flor: os pontos são ordenados
+     por `rad` antes de receberem o slot. Assim o miolo e os filetes caem no centro do
+     disco e a borda das pétalas cai na borda do disco, e o morph lê-se como a corola a
+     fechar-se sobre as próprias sementes — não como pontos embaralhados. É também o
+     que faz o `a_rad` do shader continuar a dizer alguma coisa: a fronteira
+     grave/agudo vai parar ao bordo de fora.
+
+     Quem não mora na cabeça fica em casa: o cálice (band 0,5), o caule e as folhas
+     (band 0) têm posB = pos, porque um disco de sementes pousado num cálice verde sobre
+     um caule ainda se lê como uma planta, e um disco a flutuar no sítio onde estava uma
+     flor já não se lê como nada. O shader repete esta porta (`onHead`) para a normal;
+     os dois lados têm de bater certo. */
+  function assignSeedHead(g) {
+    const H = GLSL.SEED_HEAD;
+    const n = g.rad.length;
+    for (let k = 0; k < n; k++) {
+      g.posB.push(g.pos[k * 3], g.pos[k * 3 + 1], g.pos[k * 3 + 2]);
+    }
+    const head = [];
+    for (let k = 0; k < n; k++) if (g.band[k] > 0.6) head.push(k);
+    head.sort(function (a, b) { return g.rad[a] - g.rad[b]; });
+
+    const m = head.length;
+    for (let s = 0; s < m; s++) {
+      const t = (s + 0.5) / m;
+      const rr = H.r * Math.sqrt(t);
+      const th = s * H.golden;
+      const k = head[s] * 3;
+      g.posB[k] = rr * Math.cos(th);
+      g.posB[k + 1] = H.y + H.dome * (1 - t);
+      g.posB[k + 2] = rr * Math.sin(th);
+    }
+    return m;
   }
 
   // filetes: tubo fino que sai do miolo e inclina para fora, com antera na ponta
@@ -392,8 +435,13 @@
       );
     });
 
+    // B4: a segunda casa de cada ponto, calculada sobre a nuvem inteira e já ordenada
+    // por raio — por isso vem depois de todas as superfícies e antes do baralho
+    headPoints = assignSeedHead(g);
+
     return {
       pos: new Float32Array(shuffleCloud(g).pos),
+      posB: new Float32Array(g.posB),
       norm: new Float32Array(g.norm),
       col: new Float32Array(g.col),
       seed: new Float32Array(g.seed),
@@ -488,8 +536,9 @@
   let fpsAvg = 60;
   let lastTune = 0;
   let buildMs = 0; // milissegundos de tela em branco gastos a construir a nuvem
+  let headPoints = 0; // B4: quantos pontos moram na cabeça e foram reindexados no disco
 
-  const state = { audio: 0, bass: 0, mid: 0, treble: 0, pulse: 0, pulse2: 0, timbre: 0.5, tiltX: 0, tiltY: 0, cloud: 1 };
+  const state = { audio: 0, bass: 0, mid: 0, treble: 0, pulse: 0, pulse2: 0, timbre: 0.5, tiltX: 0, tiltY: 0, cloud: 1, mixCor: 0, mixForm: 0 };
 
   // escala do flash e do contratempo, separada do timeScale: prefers-reduced-motion
   // pode abrandar o movimento sem deixar um estroboscópio de tela cheia a 1,0
@@ -596,13 +645,17 @@
     if (!gl) return false;
 
     progBg = buildProgram(VERTEX_BG, FRAGMENT_BG, ['a_pos'], ['u_time', 'u_audio', 'u_bass', 'u_mid', 'u_treble', 'u_pulse', 'u_tilt', 'u_aspect'], 'fundo');
+    // sete atributos na nuvem: o piso da WebGL 1 são oito, por isso ainda cabe um
+    // antes de qualquer aparelho ficar de fora — é por isso que a normal do disco
+    // (B4) sai calculada no shader a partir de a_posB, e não como atributo novo.
     progPoints = buildProgram(
       VERTEX_POINTS,
       FRAGMENT_POINTS,
-      ['a_pos', 'a_norm', 'a_col', 'a_seed', 'a_rad', 'a_band'],
+      ['a_pos', 'a_posB', 'a_norm', 'a_col', 'a_seed', 'a_rad', 'a_band'],
       [
         'u_proj', 'u_view', 'u_model', 'u_normalMat', 'u_eye', 'u_light', 'u_time', 'u_audio', 'u_bass',
         'u_mid', 'u_treble', 'u_pulse', 'u_pulse2', 'u_timbre', 'u_phase', 'u_cloud', 'u_size', 'u_maxPx',
+        'u_mixCor', 'u_mixForm',
       ],
       'nuvem'
     );
@@ -626,6 +679,7 @@
     buildMs = performance.now() - t0;
     points = {
       pos: staticBuffer(gl.ARRAY_BUFFER, c.pos),
+      posB: staticBuffer(gl.ARRAY_BUFFER, c.posB),
       norm: staticBuffer(gl.ARRAY_BUFFER, c.norm),
       col: staticBuffer(gl.ARRAY_BUFFER, c.col),
       seed: staticBuffer(gl.ARRAY_BUFFER, c.seed),
@@ -731,6 +785,10 @@
     gl.enableVertexAttribArray(p.attrib.a_pos);
     gl.vertexAttribPointer(p.attrib.a_pos, 3, gl.FLOAT, false, 0, 0);
 
+    gl.bindBuffer(gl.ARRAY_BUFFER, points.posB);
+    gl.enableVertexAttribArray(p.attrib.a_posB);
+    gl.vertexAttribPointer(p.attrib.a_posB, 3, gl.FLOAT, false, 0, 0);
+
     gl.bindBuffer(gl.ARRAY_BUFFER, points.norm);
     gl.enableVertexAttribArray(p.attrib.a_norm);
     gl.vertexAttribPointer(p.attrib.a_norm, 3, gl.FLOAT, false, 0, 0);
@@ -808,6 +866,10 @@
     gl.uniform1f(p.uniform.u_cloud, state.cloud);
     gl.uniform1f(p.uniform.u_size, pointPx);
     gl.uniform1f(p.uniform.u_maxPx, pointMaxPx);
+    // B3/B4: os dois sliders vão crus para o shader — quem arrasta quer ver o ponto
+    // onde o dedo está, não um atraso a chegar ao sítio onde o dedo já esteve
+    gl.uniform1f(p.uniform.u_mixCor, state.mixCor);
+    gl.uniform1f(p.uniform.u_mixForm, state.mixForm);
     bindPoints(p);
 
     // aditivo: as camadas de pontos somam-se, e é isso que faz as pétalas
@@ -1001,6 +1063,17 @@
     // e dá um quarto mais de tamanho a cada ponto
     setCloudIntensity: function (v) { state.cloud = clamp(Number(v) || 0, 0, 2); },
     cloudIntensity: function () { return state.cloud; },
+    /* B3/B4 — as duas misturas, em [0,1]: 0 é o referente desenhado (paleta quente,
+       corola aberta), 1 é a paleta rodada 180° e a cabeça de sementes. Um argumento
+       `undefined` deixa esse canal como está, para o painel poder mandar um sem
+       mexer no outro. */
+    setMix: function (cor, form) {
+      if (cor !== undefined && cor !== null) state.mixCor = clamp(Number(cor) || 0, 0, 1);
+      if (form !== undefined && form !== null) state.mixForm = clamp(Number(form) || 0, 0, 1);
+    },
+    mix: function () { return { cor: state.mixCor, form: state.mixForm }; },
+    // diagnóstico: quantos dos 46.892 pontos foram reindexados no disco de sementes
+    seedHeadPoints: function () { return headPoints; },
     // quanto custou desenhar a flor em CPU, em ms: é o número a olhar antes de se
     // decidir se a construção precisa de um worker
     buildTime: function () { return buildMs; },

@@ -35,6 +35,14 @@ O giro da flor tem inércia: `spinVel` persegue o alvo com uma mola, por isso a 
 
 O slider **Intensidade da nuvem de pontos** é um ganho sobre a nuvem toda, levado ao shader pelo uniforme `u_cloud`: `0` apaga a flor (fica só o fundo), `1` é o valor desenhado, `2` duplica o brilho e dá um quarto mais de tamanho a cada ponto. Não altera o fundo. No console: `v1su4rtShaders.setCloudIntensity(0.5)`.
 
+O slider **Mistura de cor** roda o matiz de toda a paleta da flor em torno do cinza, por uma rotação de Rodrigues: `0` é a flor que foi medida, `1` leva o vermelho-vivo ao ciano passando por magenta e azul, e leva o verde do caule a magenta-frio no mesmo gesto. É uma rotação e não uma troca de três números, por isso as relações entre pétala, miolo, cálice e caule continuam lá — só a pele é outra. O fundo não participa: a paleta fria é a flor a mudar de pele, não a sala a mudar de luz. O timbre inclina ligeiramente o ângulo, mas só dentro da mistura, e com `0` a flor é exatamente a paleta do referente.
+
+O slider **Mistura de forma** interpola a cabeça da flor — pétalas, miolo e filetes — até uma **cabeça de sementes**: um disco de Vogel (137,507° por ponto, raio em `√`) onde cada ponto é reindexado pela ordem do seu raio, por isso a correspondência frequência↔raio **continua válida** e a borda de fora continua a ser dos agudos. O disco respira como a corola respirava. Cálice, caule e folhas não se mexem: o disco pousa em cima de uma planta. Entre um e outro há um estado em que a corola ainda se abre e já se vêem as voltas da espiral.
+
+Os dois sliders são independentes e somam-se: cor a 1 com forma a 1 é uma cabeça de sementes ciano. No console: `v1su4rtShaders.setMix(cor, forma)` — passar `undefined` num canal deixa-o como está.
+
+**O painel lembra-se de si:** a posição dos cinco sliders fica guardada no próprio aparelho (`localStorage`, chave `v1su4rt.painel.v1`) e volta ao abrir. Não sai do aparelho — nada é enviado para lado nenhum.
+
 ## Celular, tablet e desktop
 
 - **Celular (< 640 px):** painel na largura toda, embaixo, **aberto recolhido** com o medidor do microfone à vista. Resolução interna limitada a 1.5x.
@@ -87,6 +95,8 @@ O `service-worker.js` é servido com `no-store` para o Vercel não o cachear e p
 | Enquadramento: FOV, distância da câmara, recuo e subida em retrato | [`assets/shaders.js`](assets/shaders.js) — bloco `FRAME` |
 | Luz do direcional: direção de origem, órbita, puxão da inclinação | [`assets/shaders.js`](assets/shaders.js) — bloco `LIGHT` e `lightDir()` |
 | Inércia do giro e precessão do eixo | [`assets/shaders.js`](assets/shaders.js) — `drawFlower()` |
+| Cabeça de sementes: raio, altura, curvatura da calota, ângulo áureo | [`assets/shaders.glsl.js`](assets/shaders.glsl.js) — `SEED_HEAD` (CPU) e `HEAD_K` (GPU), conferidos por `scripts/check.mjs` |
+| Mistura de cor e de forma: os dois sliders | uniformes `u_mixCor` / `u_mixForm`, `setMix()` em [`assets/shaders.js`](assets/shaders.js) |
 | Bandas de frequência, portas, suavização, batida, contratempo, timbre, giroscópio | [`assets/interaction.js`](assets/interaction.js) — bloco `TUNE` |
 | Painel, sliders, tela cheia, medidor, avisos do microfone | [`assets/app.js`](assets/app.js) |
 | Layout responsivo do painel | [`assets/styles.css`](assets/styles.css) |
@@ -98,7 +108,7 @@ O `service-worker.js` é servido com `no-store` para o Vercel não o cachear e p
 | Histórico das mudanças | [`CHANGELOG.md`](CHANGELOG.md) |
 
 - `assets/shaders.glsl.js` são os quatro shaders em texto (`VERTEX_BG`, `FRAGMENT_BG`, `VERTEX_POINTS`, `FRAGMENT_POINTS`). É carregado **antes** de `shaders.js`, que só os lê de `window.v1su4rtGlsl`. Quase todo o ajuste visual acontece aqui, e nenhum precisador do renderizador muda.
-- `assets/shaders.js` constrói a geometria em CPU e desenha. Cada ponto leva posição, cor, normal e semente; o resto é feito no shader. **Atenção ao `mediump`:** no celular o passo é 2⁻¹⁰, por isso a fase `age` é dobrada na CPU antes de ir para o shader.
+- `assets/shaders.js` constrói a geometria em CPU e desenha. Cada ponto leva sete atributos — posição, **posição B** (a casa no disco de sementes), normal, cor, semente, raio e banda; o resto é feito no shader. A normal do disco **não** é um oitavo atributo: vem da curvatura analítica da calota, porque o teto do WebGL 1 são 8 atributos de vértice e a nuvem já usa 7. **Atenção ao `mediump`:** no celular o passo é 2⁻¹⁰, por isso a fase `age` é dobrada na CPU antes de ir para o shader.
 - **Todos os números do som estão no bloco `TUNE`**, no topo de `assets/interaction.js`: FFT, portas e curso mínimo por banda, ataque/release, os **dois** detetores de ataque (grave e agudos) com as suas refractárias, o curso do **timbre**, a re-centragem do giroscópio (`orientRecenter`, `orientDeadband`) e o joelho suave. Não há ganhos espalhados pelo arquivo — para mudar a reação ao som, muda-se ali. `orientRecenter: 0` desliga a re-centragem e prende a base à pose do instante em que a permissão foi concedida. As bandas normalizam-se sozinhas (piso de ruído + envelope de pico), por isso não há um valor "certo" para a música de cada casa.
 - **Todos os números do enquadramento estão no bloco `FRAME`**, em `assets/shaders.js`. O FOV é vertical e fixo, por isso é a **largura** que corta: `reach` é o meio-comprimento da corola aberta e `fill` a fração da meia-largura visível que ela pode ocupar. Se mexer em `WHORLS`/`LEAVES` e a flor crescer, atualize `reach` — senão volta a cortar as pontas em retrato. A névoa dos shaders é normalizada por `u_eye.z`, por isso lê-se igual com a câmara recuada.
 - `service-worker.js`: cache-first. Ao mudar qualquer arquivo em `APP_FILES`, aumente `CACHE_NAME` e registe a mudança no `CHANGELOG.md`.

@@ -10,6 +10,12 @@
 (function () {
   'use strict';
 
+  /* B4 — os números do disco de sementes, num sítio só porque os dois lados têm de
+     dizer o mesmo: shaders.js usa `r`, `y`, `dome` e `golden` para calcular a_posB, e
+     VERTEX_POINTS usa a curvatura da mesma calota para calcular a normal. HEAD_K é
+     2·dome/r² e vive escrito lá dentro; scripts/check.mjs confere o par. */
+  const SEED_HEAD = { r: 0.78, y: 0.22, dome: 0.16, golden: 2.39996323 };
+
   const VERTEX_BG = `
 precision mediump float;
 
@@ -111,6 +117,14 @@ attribute vec3 a_col;
 attribute vec3 a_seed;
 attribute float a_rad;
 attribute float a_band;
+/* B4 — a_posB é a MESMA nuvem, reindexada noutra forma: um disco de sementes em
+   filotaxe. Cada ponto tem, portanto, duas casas, e u_mixForm escolhe entre elas.
+   Os números do disco (raio, altura, curvatura) vivem em SEED_HEAD, em baixo, porque
+   têm de bater certo com a geometria que os calcula em shaders.js; scripts/check.mjs
+   confere. Só os pontos da cabeça (band > 0,6) têm casa B: o cálice, o caule e as
+   folhas ficam onde estão, e por isso a mistura se pode aplicar a toda a nuvem sem
+   porta. */
+attribute vec3 a_posB;
 
 uniform mat4 u_proj;
 uniform mat4 u_view;
@@ -130,6 +144,32 @@ uniform float u_phase;
 uniform float u_cloud;
 uniform float u_size;
 uniform float u_maxPx;
+uniform float u_mixCor;
+uniform float u_mixForm;
+
+/* A calota do disco de sementes é y = HEAD.y + HEAD.dome·(1 − (r/HEAD.r)²), por isso a
+   sua normal num ponto (x, z) é normalize(2·dome/r²·x, 1, 2·dome/r²·z). HEAD_K é
+   exatamente esse coeficiente, 2·0,16/0,78². */
+const float HEAD_K = 0.526;
+
+vec3 headNormal(vec3 q) {
+  return normalize(vec3(HEAD_K * q.x, 1.0, HEAD_K * q.z));
+}
+
+/* B3 — rotação de matiz em torno do eixo do cinza (1,1,1), por Rodrigues. É
+   isoluminante no sentido que este projeto mede: a rotação deixa inalterada a soma
+   dos três canais, que é exatamente o que readPixels acumula no orçamento de luz.
+   Não é isoluminante para o olho — o azul pesa 0,07 na luminância perceptual, por
+   isso a flor parece um pouco mais escura a mistura toda, e nunca mais clara. O
+   max não é cosmético: rodar uma cor saturada leva um canal para negativo, e um
+   canal negativo só se torna luz ao ser cortado a zero — corta-se aqui, e o que se
+   corta é sempre luz a menos. */
+vec3 hueRot(vec3 c, float a) {
+  const vec3 k = vec3(0.5773503); // 1/sqrt(3)
+  float ca = cos(a);
+  return c * ca + cross(k, c) * sin(a) + k * dot(k, c) * (1.0 - ca);
+}
+
 
 varying mediump vec3 v_col;
 varying mediump float v_a;
@@ -144,7 +184,18 @@ varying mediump vec2 v_rot;
 varying mediump float v_e;
 
 void main() {
-  vec3 p = a_pos;
+  /* B4 — o ponto tem duas casas e u_mixForm interpola entre elas. A porta é
+     onHead: só a cabeça (pétalas, miolo, filetes) se reindexa no disco, por isso o
+     cálice, o caule e as folhas ficam onde estão e o disco continua pousado em cima
+     de uma planta. Depois do morph é que se tiram o azimute e o raio de projeção, para
+     que as ondas que correm em azimute corram no disco tão bem como na corola.
+     O a_rad NÃO morpha: um ponto leva a sua banda de frequência da flor, e como o
+     índice do disco é dado pela ordem do raio, a fronteira grave-agudo continua a cair
+     na borda de fora — o disco respira como a corola respirava. */
+  float onHead = step(0.6, a_band);
+  float form = clamp(u_mixForm, 0.0, 1.0) * onHead;
+  vec3 p = mix(a_pos, a_posB, form);
+  vec3 n0 = normalize(mix(a_norm, headNormal(a_posB), form));
   float r = clamp(a_rad, 0.0, 1.0);
   float az = atan(p.z, p.x + 0.0001);
   vec2 dir = normalize(vec2(p.x, p.z) + vec2(0.0001));
@@ -175,7 +226,7 @@ void main() {
   float roll = sin(az * 3.0 + r * 5.0 - u_time * 1.1) * u_mid * 0.022 * floral;
   p.xz += dir * (open + breath) * r * 0.55;
   p.y += ripple + open * 0.42 * r + bend + shimmer + sway * (0.25 + r);
-  p += a_norm * roll;
+  p += n0 * roll;
 
   // fragmentação em fumo: só os graves fortes descolam pontos, e sempre da borda
   // para dentro, porque é a borda que pertence aos graves
@@ -187,7 +238,7 @@ void main() {
   float ex = 1.0 + (0.7 + 3.3 * frag) * age;
 
   // o puff sai pela normal, puxado para fora do eixo da flor
-  vec3 puff = normalize(a_norm * 0.7 + vec3(dir.x, 0.30, dir.y) * 0.7);
+  vec3 puff = normalize(n0 * 0.7 + vec3(dir.x, 0.30, dir.y) * 0.7);
   p += puff * (0.035 + 0.60 * frag) * age * (0.30 + 0.70 * floral);
 
   // tremor turbulento, com duas escalas por eixo
@@ -226,7 +277,7 @@ void main() {
   float box1 = min(box0 * kick, u_maxPx);
   gl_PointSize = max(box1, 1.0);
 
-  vec3 N = normalize(u_normalMat * a_norm);
+  vec3 N = normalize(u_normalMat * n0);
   vec3 V = normalize(u_eye - world.xyz);
   /* B2 — a luz vinha num vetor fixo aqui dentro. Agora vem em u_light, já
      normalizada: o renderizador faz-lhe uma órbita lenta de ±15° em torno do eixo Y e
@@ -311,6 +362,52 @@ void main() {
   float hatFlick = 1.0 + (u_treble * 0.45 + u_pulse2 * 0.35) * sin(u_time * (3.0 + u_treble * 7.0) + a_seed.z * 24.0);
   col *= 0.62 + u_audio * 0.25 + band * 0.15 + (0.16 + 0.15 * u_treble) * spark * (1.0 - r) + 0.95 * smoothstep(0.42, 0.88, r) * hatFlick;
 
+  /* B3 — a mistura de cor roda o matiz de toda a paleta, não troca três números:
+     vermelho-vivo → ciano, laranja → violeta, e o verde do caule → magenta-frio, tudo
+     na mesma rotação, por isso as relações de cor da flor continuam lá. O ângulo vai
+     a π (180°), que é o ponto onde o vermelho cruza exatamente para o ciano.
+     O SINAL é o −, e é a escolha mais importante deste bloco: os dois sentidos da
+     rotação chegam ao mesmo ciano a π, mas um passa pelo verde e o outro pelo
+     violeta. Pelo verde a flor inteira fica lima a meio do curso do slider — que é o
+     verde do caule multiplicado por toda a corola, e lê-se como outra planta. Pelo
+     violeta, o arco é vermelho → magenta → azul → ciano: nunca há verde a mais, e o
+     meio do curso é a paleta mais bonita dos dois lados. Capturado: com o sinal + e
+     mixCor a 0,3 a flor inteira era uma bola verde lima.
+     O timbre mexe no ângulo SÓ dentro da mistura (o fator u_mixCor): com a paleta do
+     referente em 0 a flor é exatamente a que foi medida, e quem quiser a leitura
+     "som escuro → mais para um lado do arco" tem de a escolher.
+
+     A rotação em torno do cinza deixa inalterada a SOMA dos três canais, e é essa a
+     quantidade que o orçamento de luz deste projeto mede. Não é, porém, o que o frame
+     devolve: o framebuffer corta cada canal a 1,0, e um vermelho que já estava cortado
+     passa a distribuir a mesma luz por três canais — o frame ganha luz sem que ninguém
+     a tenha pedido. Por isso o passo a seguir volta a fechar a conta com o que
+     efetivamente se pinta: soma antes, soma depois, e o fator entre as duas. Fechou em
+     +2% medido (frame inteiro, microfone calado, mistura a 1 contra repouso) — o resíduo
+     é o corte que acontece na SOMA de todos os pontos, coisa que a conta ponto a ponto
+     não pode ver. O max continua a ser preciso: rodar uma cor saturada leva um canal
+     para negativo, e um canal negativo só se torna luz ao ser cortado a zero. */
+  float hueA = -u_mixCor * (3.1416 + (u_timbre - 0.5) * 0.85);
+
+  /* B4 — compensação de densidade do disco. São os mesmos 43.598 pontos da cabeça que
+     passam de uma taça aberta para um sólido de frente para a câmara, e a luz por pixel
+     sobe. Medido no frame inteiro (média dos três canais, 489×431, microfone calado,
+     nuvem a 0,8): com a forma em 0 o frame vale 10,9; sem compensação vale 20,7, com
+     0,16% de pixels a branco de todo. A resposta não é linear por causa desses cortes —
+     o primeiro fator, 0,48, devia dar 9,9 pela regra de três e deu 15,7 (+45%). Foi
+     preciso descer a 0,30 para fechar a conta: medido a nuvem 0,65, repouso 7,56 contra
+     disco 7,35 (−2,8%), e a nuvem 1,0, 10,33 contra 10,13 (−1,9%). Fica uma nesga abaixo
+     da paridade, e é a nesga certa: margem de luz é coisa que se gasta com o microfone,
+     não com a mistura. O fator acompanha a mesma porta do morph: caule, folhas e cálice,
+     que não se mexem, não escurecem, e com a forma em 0 a flor continua a ser a que foi
+     medida no lote. */
+  col *= mix(1.0, 0.3, form);
+
+  vec3 rot = max(hueRot(col, hueA), vec3(0.0));
+  float sAntes = dot(min(col, vec3(1.0)), vec3(1.0));
+  float sDepois = dot(min(rot, vec3(1.0)), vec3(1.0));
+  col = rot * (sAntes / max(sDepois, 0.001));
+
   // névoa de profundidade: sem depth buffer é assim que o lado de trás fica atrás.
   // É forte de propósito: os pontos de trás são os que se empilham sobre os de
   // frente, e sem os abaixar o centro da corola estoura em branco.
@@ -381,5 +478,6 @@ void main() {
     FRAGMENT_BG: FRAGMENT_BG,
     VERTEX_POINTS: VERTEX_POINTS,
     FRAGMENT_POINTS: FRAGMENT_POINTS,
+    SEED_HEAD: SEED_HEAD,
   };
 })();

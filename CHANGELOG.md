@@ -4,6 +4,61 @@ Formato seguido: uma entrada por mudança de visual ou de estrutura, com o `CACH
 correspondente do `service-worker.js` — é ele que diz ao browser para deitar fora a
 versão guardada.
 
+## 2026-10-18 — a flor tem duas misturas: paleta fria e cabeça de sementes (`v1su4rt-v18`)
+
+Lote 3. O painel ganhou dois sliders — **Mistura de cor** e **Mistura de forma** — e passou a
+lembrar-se de si. Nada aqui mexe na escuta: com os dois em 0 a flor é exatamente a que foi
+medida no lote anterior, píxel por píxel.
+
+- **B3 — a mistura de cor roda o matiz, não troca três números.** Uma rotação de Rodrigues em
+  torno do eixo do cinza (1,1,1) leva vermelho-vivo a ciano, laranja a violeta e o verde do
+  caule a magenta-frio na mesma rotação, até π, que é onde o vermelho cruza para o ciano. O
+  **sinal** foi a escolha cara do lote: os dois sentidos chegam ao mesmo ciano, mas um passa
+  pelo verde e o outro pelo violeta. Com `+`, a meio do curso a flor inteira era uma bola verde
+  lima (capturado em screenshot). Com `−` o arco é vermelho → magenta → azul → ciano e o meio do
+  curso é a paleta mais bonita dos dois lados. Afeta só a nuvem de pontos: o fundo fica onde
+  está, porque a paleta fria é a flor a mudar de pele, não a sala a mudar de luz.
+- **B3 — e a rotação mentia na luz.** Rodar em torno do cinza deixa inalterada a **soma** dos
+  três canais, que é o que o orçamento mede; o que o frame devolve não é a soma, é a soma depois
+  de cada canal ser cortado a 1,0. Um vermelho já cortado passa a distribuir a mesma luz por três
+  canais e o frame ganha ~10% sem que ninguém tenha pedido. Por isso a rotação é seguida de uma
+  renormalização ponto a ponto (soma antes / soma depois, com as duas mínimas a 1,0). Fechou em
+  **+2%** medido, que é o corte que acontece na soma de todos os pontos e a conta individual não
+  pode ver.
+- **B4 — a forma B é uma cabeça de sementes, não uma flor nova.** Os 43.598 pontos da cabeça
+  (pétalas, miolo e filetes) são reindexados numa espiral de Vogel — `r = R·√((s+½)/N)`,
+  `θ = s·137,507°` — sobre uma calota. O índice é dado pela ordem do `a_rad` de cada ponto, por
+  isso a correspondência frequência→raio **continua válida no disco**: a borda de fora continua a
+  ser dos agudos e o disco respira como a corola respirava. O `a_rad` não morpha.
+- **B4 — o morph tem porta.** `onHead = step(0.6, a_band)`: cálice, caule e folhas ficam onde
+  estão, e o disco pousa em cima de uma planta em vez de flutuar no escuro. O mesmo `form` governa
+  a posição (`a_posB`), a normal e a compensação de luz.
+- **B4 — a normal do disco é calculada, não enviada.** A calota tem normal analítica
+  (`HEAD_K = 2·dome/r²`, escrita em `const float` dentro do shader), o que evita o 8.º atributo de
+  vértice — o teto do WebGL 1 é 8 e a nuvem usa 7. Os números da calota vivem em `SEED_HEAD`, no
+  topo de `shaders.glsl.js`, porque `shaders.js` os usa para gerar `a_posB` e o shader para gerar a
+  normal; `scripts/check.mjs` confere o par e falha se `HEAD_K` divergir de `2·dome/r²`.
+- **B4 — o disco custava quase o dobro da luz.** Mesmos pontos, sólido fechado de frente para a
+  câmara em vez de taça aberta: 10,9 → 20,7 no frame inteiro e 0,16% de pixels a branco de todo.
+  A resposta não é linear por causa dos cortes — o primeiro fator, 0,48, devia dar 9,9 pela regra
+  de três e deu 15,7. A 0,30 fecha em **7,56 → 7,35 (−2,8%)** a nuvem 0,65 e 10,33 → 10,13
+  (−1,9%) a nuvem 1,00, zero pixels queimados nas duas leituras. Fica uma nesga abaixo da
+  paridade de propósito: margem de luz gasta-se com o microfone, não com a mistura.
+- **A6 — o painel lembra-se.** Os cinco sliders são gravados em `localStorage` sob
+  `v1su4rt.painel.v1` e restaurados ao abrir, com o valor validado contra o `min`/`max` do
+  próprio input antes de ser aceite (um slider que mudou de curso não arrasta o resto consigo).
+  Prova de ponta a ponta feita: mudar valores, recarregar, os valores voltam.
+- **Duas armadilhas de medida que trocaram números por engano.** (1) O recorte central deixou de
+  servir: com a forma a morphar, o recorte cobre outro objeto, e as leituras antigas de cor
+  (+10%) eram de um recorte que já não era o mesmo sítio. Passou a medir-se o frame inteiro, com
+  média dos três canais e percentagem de pixels queimados. (2) Emular um fator de cor a baixar o
+  `u_cloud` **não é a mesma conta**: `u_cloud` entra no alpha, que é cortado a 1,0 antes de
+  multiplicar, e a emulação dava +17% onde o fator compilado mede −3%. Todos os números acima são
+  do shader compilado, medidos depois do reload.
+- **Ainda não verificado:** celular, tablet e a Vercel — e o disco com microfone a sério. As
+  leituras deste lote foram todas com os canais de áudio em repouso; a espiral apanhar os agudos
+  na borda é a promessa, e é no som que ela se julga.
+
 ## 2026-10-17 — a flor viva: sprite elíptico, luz que anda, giro com inércia (`v1su4rt-v17`)
 
 Lote 2. A flor deixa de ser um objeto que respira e passa a ser um objeto que se move por

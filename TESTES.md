@@ -40,6 +40,12 @@ Com **Ativar interações** ligado e música com grave e agudo separáveis:
 - [ ] Volume alto sobe a exposição, mas o vermelho continua vermelho (as pétalas não ficam brancas).
 - [ ] Em silêncio a flor volta ao repouso suave, sem tremer.
 - [ ] **Intensidade da nuvem de pontos**: a `0` a flor inteira desaparece e só fica o fundo; a `1` o visual é o padrão; a `2` os pontos crescem e brilham o dobro. O número à direita acompanha o slider.
+- [ ] **Mistura de cor (B3)**: a `0,5` a flor é magenta-azulada — **nunca verde-lima**; a `1` o vermelho-vivo do referente chega ao ciano e o verde do caule a magenta-frio, na mesma rotação. A relação entre pétala, miolo e cálice continua legível. O fundo não muda com o slider.
+- [ ] **Mistura de forma (B4)**: a `1` a cabeça vira um disco de sementes com as voltas visíveis; cálice, caule e folhas ficam onde estavam e o disco pousa **em cima** deles, não flutua no escuro. A `0,5` vê-se a corola ainda aberta com a espiral a formar-se.
+- [ ] **O disco continua a ouvir**: com a forma a `1` e música, a borda de fora cintila com os agudos e o centro respira com os graves — a reindexação não partiu o mapa frequência↔raio.
+- [ ] **Luz do disco**: passar a forma de `0` a `1` não lhe sobe o brilho global (medido −3%), nem com a nuvem a `2`. Zero pixels a branco de todo.
+- [ ] **Cor e forma somam-se**: os dois sliders no máximo são uma cabeça de sementes ciano, sem um dos dois anular o outro.
+- [ ] **Memória do painel (A6)**: mexa em todos os sliders e recarregue a página → voltam onde estavam. Limpe o armazenamento do site → voltam aos valores de origem.
 - [ ] Application → Manifest: nome, ícones 192/512/maskable, `display: standalone`.
 - [ ] Application → Service Workers: "activated and is running".
 - [ ] Network → Offline → recarregar: a página abre do cache.
@@ -98,3 +104,5 @@ Em DevTools → modo dispositivo (ou redimensionando a janela):
 - [ ] Hard reload (Ctrl+Shift+R) no desktop; no celular, fechar e reabrir o app.
 - [ ] `git status` antes de commitar.
 - [ ] **Medir luz entre builds** exige as duas mãos na porta: os sete canais de áudio fixados em 0, `u_light` na constante de origem, `#cloud-intens` **verificado e igual** nos dois lados, e resolução interna e número de pontos registados ao lado do número — `tuneQuality()` mexe nos dois últimos sozinho quando o fps cai. Uma comparação sem esses valores não vale nada: foi assim que três números anteriores se deitaram fora.
+- [ ] **Comparar formas diferentes** exige mudar a métrica: o recorte central deixa de cobrir a mesma coisa quando a flor morpha. Meça o **frame inteiro** — média dos três canais e percentagem de pixels queimados (`min(R,G,B) > 240`).
+- [ ] **Não emule um fator de cor com o `u_cloud`.** O `u_cloud` entra no alpha, que é cortado a 1,0 antes de multiplicar, e a emulação lê-se mais clara que escalar a cor dentro do shader: dava +17% onde o fator compilado media −3%. Meça sempre o build compilado, depois de limpar caches e recarregar.

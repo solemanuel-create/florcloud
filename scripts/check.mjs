@@ -162,6 +162,36 @@ for (const n of want) {
   }
 }
 
+/* ---------- 5. o disco de sementes: os dois lados do mesmo número ---------- */
+
+// A normal do disco (B4) sai no shader de HEAD_K = 2·dome/r², e a geometria de
+// shaders.js põe os pontos na calota descrita por SEED_HEAD. Se um dos dois mudar sem
+// o outro, o disco acende com a normal errada e a consola não diz nada — é exatamente
+// o género de troca que este arquivo existe para apanhar antes do deploy.
+const head = glslSrc.match(/const SEED_HEAD = \{([^}]*)\}/);
+if (!head) {
+  fail('shaders.glsl.js: SEED_HEAD não encontrado, e shaders.js lê-o para construir a_posB');
+} else {
+  const num = (key) => {
+    const m = head[1].match(new RegExp(key + ':\\s*([0-9.eE+-]+)'));
+    return m ? parseFloat(m[1]) : NaN;
+  };
+  const headR = num('r');
+  const headDome = num('dome');
+  const glslK = (glsl.VERTEX_POINTS || '').match(/const float HEAD_K = ([0-9.eE+-]+);/);
+  const others = ['y', 'golden'].map(num);
+  if (!glslK) fail('VERTEX_POINTS: não encontrou «const float HEAD_K = ...»');
+  if (![headR, headDome].concat(others).every(isFinite)) {
+    fail('SEED_HEAD: r, y, dome e golden têm de ser quatro números');
+  } else if (glslK) {
+    const kDoShader = parseFloat(glslK[1]);
+    const kDaGeometria = (2 * headDome) / (headR * headR);
+    if (Math.abs(kDoShader - kDaGeometria) > 5e-4) {
+      fail(`SEED_HEAD e HEAD_K trocados: a geometria pede ${kDaGeometria.toFixed(5)} (2·dome/r²), o shader usa ${kDoShader.toFixed(5)}`);
+    }
+  }
+}
+
 notes.push(`programas: ${programs.map((p) => `${p.label}(${(listed[p.vs]?.uniforms ?? []).length} uniformes, ${(listed[p.vs]?.attribs ?? []).length} atributos)`).join(', ')}`);
 notes.push(`CACHE_NAME: ${cache ? cache[1] : '?'}`);
 

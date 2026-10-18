@@ -11,9 +11,13 @@
   const audioRange = $('audio-sens');
   const orientRange = $('orient-sens');
   const cloudRange = $('cloud-intens');
+  const mixCorRange = $('mix-cor');
+  const mixFormRange = $('mix-form');
   const audioOut = $('audio-sens-value');
   const orientOut = $('orient-sens-value');
   const cloudOut = $('cloud-intens-value');
+  const mixCorOut = $('mix-cor-value');
+  const mixFormOut = $('mix-form-value');
   const fsBtn = $('fullscreen-toggle');
   const meterFill = $('meter-fill');
 
@@ -97,13 +101,44 @@
     setStatus(msg, kind);
   });
 
+  /* A6 — os sliders guardam-se no próprio aparelho. Não há servidor nem conta, por
+     isso localStorage é o único sítio onde "a flor de quem a ajustou" pode voltar a
+     ser a mesma quando se reabre o app. Só vão os números dos controles, nunca nada
+     do microfone nem da pose, e tudo o que vem de lá é tratado como suspeito: JSON
+     avariado, valor fora do min/max do input ou NaN volta ao valor escrito na página.
+     A chave é versionada (`.v1`) porque uma preferência com números que já não fazem
+     sentido é pior do que nenhuma. */
+  const PREF_KEY = 'v1su4rt.painel.v1';
+  const ranges = [audioRange, orientRange, cloudRange, mixCorRange, mixFormRange];
+  let prefs = {};
+  try {
+    const raw = JSON.parse(localStorage.getItem(PREF_KEY));
+    if (raw && typeof raw === 'object') prefs = raw;
+  } catch (e) {
+    prefs = {};
+  }
+  function savePrefs() {
+    const out = {};
+    for (const r of ranges) out[r.id] = parseFloat(r.value);
+    try {
+      localStorage.setItem(PREF_KEY, JSON.stringify(out));
+    } catch (e) {
+      // modo privado com quota a zero: o painel continua a funcionar, só não lembra
+    }
+  }
+
   function bindRange(input, out, apply) {
+    const saved = Number(prefs[input.id]);
+    if (isFinite(saved) && saved >= +input.min && saved <= +input.max) input.value = String(saved);
     const sync = () => {
       const v = parseFloat(input.value);
       out.textContent = v.toFixed(2);
       apply(v);
     };
-    input.addEventListener('input', sync);
+    input.addEventListener('input', () => {
+      sync();
+      savePrefs();
+    });
     sync();
   }
   bindRange(audioRange, audioOut, (v) => { sensors.audioSens = v; });
@@ -111,6 +146,11 @@
   bindRange(cloudRange, cloudOut, (v) => {
     if (window.v1su4rtShaders) window.v1su4rtShaders.setCloudIntensity(v);
   });
+  const setMix = (cor, form) => {
+    if (window.v1su4rtShaders) window.v1su4rtShaders.setMix(cor, form);
+  };
+  bindRange(mixCorRange, mixCorOut, (v) => setMix(v, undefined));
+  bindRange(mixFormRange, mixFormOut, (v) => setMix(undefined, v));
 
   collapseBtn.addEventListener('click', () => {
     const collapsed = panel.classList.toggle('is-collapsed');
