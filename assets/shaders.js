@@ -1121,6 +1121,9 @@
       if (form !== undefined && form !== null) state.mixForm = clamp(Number(form) || 0, 0, 1);
     },
     mix: function () { return { cor: state.mixCor, form: state.mixForm }; },
+    // diagnóstico: o tilt já passado pelo joelho do funil — é o número que o shader
+    // vê, e por isso o único que prova o que um toque faz (ou não) no canal
+    tilt: function () { return { x: state.tiltX, y: state.tiltY }; },
     // diagnóstico: quantos dos 46.892 pontos foram reindexados no disco de sementes
     seedHeadPoints: function () { return headPoints; },
     // diagnóstico da sincronia: quanto tempo de animação passou desde cada golpe.

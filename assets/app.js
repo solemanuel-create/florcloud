@@ -200,7 +200,14 @@
   ['fullscreenchange', 'webkitfullscreenchange'].forEach((n) => document.addEventListener(n, paintFs));
   paintFs();
 
-  /* ---------- ponteiro (mouse, toque): substitui o giroscópio quando não existe ---------- */
+  /* ---------- ponteiro (mouse, toque): substitui o giroscópio quando não existe ----------
+
+     G5b — o tilt vem só do **mover**. Até aqui o `pointerdown` também punha o alvo na
+     posição do dedo, por isso um toque num canto fazia as duas coisas que significam
+     o oposto: batida **e** o canal do tilt no teto, com a flor a dar um coice e a
+     voltar — num aparelho sem giroscópio, que é justamente onde o ponteiro manda. A
+     decisão é que um toque é só batida; quem quer inclinar arrasta. No rato nada se
+     perde, porque o `pointermove` do hover já deu a posição toda antes do clique. */
 
   const pointer = { x: 0, y: 0 };
   const pointerTarget = { x: 0, y: 0 };
@@ -210,7 +217,6 @@
     pointerTarget.y = -((e.clientY / window.innerHeight) * 2 - 1);
   }
   canvas.addEventListener('pointermove', movePointer);
-  canvas.addEventListener('pointerdown', movePointer);
   const release = (e) => { if (e.pointerType !== 'mouse') { pointerTarget.x = 0; pointerTarget.y = 0; } };
   canvas.addEventListener('pointerup', release);
   canvas.addEventListener('pointercancel', release);

@@ -4,6 +4,61 @@ Formato seguido: uma entrada por mudança de visual ou de estrutura, com o `CACH
 correspondente do `service-worker.js` — é ele que diz ao browser para deitar fora a
 versão guardada.
 
+## 2026-10-19 — um toque é uma batida, nunca uma inclinação (`v1su4rt-v24`)
+
+Lote G5b, o terceiro do diagnóstico do giroscópio e o último que não precisa de hardware novo.
+Uma linha removida em [`assets/app.js`](assets/app.js) e um observador acrescentado em
+`assets/shaders.js`; nada em `interaction.js`, nenhum shader, nenhum uniforme, nenhuma cor.
+
+**O conflito.** O `pointerdown` chamava `movePointer`, por isso o simples **pousar** o dedo num
+sítio punha o alvo do tilt naquele sítio. Num telemóvel sem giroscópio — exatamente onde o ponteiro
+manda — o gesto mais comum do ecrã, o toque, fazia as duas coisas que significam o oposto: batida
+**e** inclinação. Medido na build anterior, um toque no canto de cima à direita levava o canal
+(canal depois do joelho, o número que o shader vê, teto 1,000) a **0,979 em x e 0,743 em y**; com o
+dedo pousado um segundo sem se mover, ia ao **teto nos dois eixos**. No rato tinha o mesmo defeito:
+um clique num canto, sem o cursor se ter mexido, dava **0,732 / 0,685**. E a flor dava um coice a
+cada batida dada com o dedo, porque o `pointerup` volta a zero e o `pointer` suaviza a τ de 1/6 s.
+
+**A decisão dele**, dada quando o lote foi proposto: *só batida, nunca inclinação*. Fica implementada
+ao segundo verbo — o tilt passa a vir **só do `pointermove`**.
+
+| cena (PointerEvent verdadeiro, `tilt()` lido do shader) | `v23` | `v24` |
+|---|---|---|
+| toque no canto, 120 ms de dedo | 0,979 / 0,743 | **0,000 / 0,000** |
+| dedo pousado 1 s no canto, sem se mover | 1,000 / 1,000 (teto) | **0,000 / 0,000** |
+| clique de rato no canto, cursor parado | 0,732 / 0,685 | **0,000 / 0,001** |
+| arrastar do centro até ao canto (3 repetições) | 1,000 / 1,000 | 1,000 / 1,000 |
+| hover de rato até ao canto | 0,999 / 0,999 | 0,999 / 0,999 |
+| carimbo da batida no toque (`sinceHits().beat`) | 0 | 0 |
+
+- **O que não se perdeu está na tabela**: o arrasto dá exatamente o mesmo teto nas três repetições,
+  o hover do rato idem, e o toque continua a carimbar o instante da batida — que é a outra metade da
+  frase dele. No rato o clique deixa de mover a flor, mas o `pointermove` do hover já punha o tilt
+  onde o cursor estava **antes** do clique, por isso nada muda para quem usa o rato.
+- O caminho do ponteiro só corre quando `!sensors.orientLive` (G5a), por isto ser um substituto do
+  giroscópio e não um segundo canal.
+- **`tilt()` novo em `v1su4rtShaders`** — devolve `state.tiltX/tiltY` já passados pelo `tiltKnee`. É
+  o único número que prova o que um gesto faz no canal, e o patch foi aplicado **também à build de
+  referência** para que os dois lados da tabela sejam lidos do mesmo sítio; no `v23` é um observador
+  puro, sem tocar em estado nem em ordem de nada.
+- **O que se ganha a perder, e é o preço**: num telemóvel sem sensor, tocar num canto já não inclina
+  a flor — é preciso arrastar. É a decisão, não um efeito colateral.
+
+**Medição** — as duas builds servidas lado a lado (a de referência com `git archive HEAD | tar -x`,
+a de trabalho no tree), os mesmos quatro gestores sintéticos disparados no `<canvas>` com
+`pointerType` de verdade, e a amostragem a ler o funil em vez de reimplementar a suavização. As
+regressões do áudio e do tilt correm todas verdes sobre a mexida: `scripts/check.mjs` com
+`fundo(8, 1)` e `nuvem(23, 7)` inalterados e `CACHE_NAME: v1su4rt-v24`, `_g5.mjs` **19/19**,
+`_m1.mjs` **11/11**, `_s2.mjs` **12/12**, `_knee.mjs` e `_g12.mjs` sem uma linha de diferença —
+`interaction.js` não foi tocado neste lote. Consola sem uma linha nas duas builds.
+
+**O que não foi verificado:** os `PointerEvent` são disparados por código, e um browser real **filtra
+movimento** antes de emitir `pointermove` num toque. Se esse filtro existir, um arrasto começa a
+inclinar uns píxeis depois do dedo se mover — que é a direção certa (um dedo que ainda não se moveu
+não deve inclinar), mas é uma hipótese, não uma medida. Fica por sentir num celular: se o toque
+continua a dar o flash com a mesma força, e se um arrasto curto (daqueles de 20 px) já inclina o
+suficiente para se notar.
+
 ## 2026-10-19 — a pose de uso passa a ser o neutro, e o curso de cima encurta (`v1su4rt-v23`)
 
 Lote G1 + G2, o segundo do diagnóstico do giroscópio. Uma mexida só em `assets/interaction.js`:
