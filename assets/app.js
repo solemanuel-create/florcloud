@@ -264,7 +264,7 @@
 
     let tiltX = s.tiltX;
     let tiltY = s.tiltY;
-    if (!sensors.orientOn) {
+    if (!sensors.orientLive) {
       const k = 1 - Math.exp(-dt * 6);
       pointer.x += (pointerTarget.x - pointer.x) * k;
       pointer.y += (pointerTarget.y - pointer.y) * k;

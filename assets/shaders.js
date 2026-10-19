@@ -11,6 +11,37 @@
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
   const c01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
+  /* G3 — um teto só para a inclinação. O tilt era o único canal do renderizador
+     que chegava aos consumidores com um corte próprio: a flor parava em ±1,2, a luz
+     de teto em ±1, o fundo do ecrã não parava em lado nenhum — e o canal inteiro
+     estava já cortado a ±1 monte acima, em _recenter. À sensibilidade de fábrica
+     (1,5) isso dava três ângulos de aparelho diferentes a partir dos quais cada
+     parte deixava de se mexer: a luz a 27°, a flor a 32°, o fundo a 40°, e depois
+     nada, nunca mais, até ao fim do gesto. É o mesmo mal que o ombro suave resolveu
+     no áudio, em interaction.js, e que aqui nunca tinha sido aplicado.
+        O joelho vive neste funil e não em read() porque o tilt tem dois caminhos: o
+     giroscópio passa por read(), o rato e o toque (app.js) não passam. Aqui passam
+     os dois. A curva é a de lá — linear até 0,75, o mesmo valor do knee, e
+     assintótica a ±1 depois.
+        Como o teto passa a ser um só, cada coeficiente foi posto no valor que dá a
+     cada consumidor o máximo que ele já tinha: flor 0,25 → 0,30 (o corte dela em
+     1,2 valia exatamente 0,30 rad), luz fica em 0,18 (o corte em 1 já era o teto
+     novo), fundo 0,12 → 0,18 (a sensibilidade de fábrica dava 1,5×0,12 = 0,18). O
+     que se mexe é o meio do curso, todo ele para cima: a 20° de aparelho a flor
+     inclina 12,9° em vez de 10,7° e o fundo desloca 0,135 em vez de 0,09 uv; a luz
+     não se mexe nenhum (7,73° nos dois). Medido em _knee.mjs, e foi o A/B que disse
+     que sem subir os coeficientes o teto partilhado custava −17% à flor e −33% ao
+     fundo. */
+  const TILT_KNEE = 0.75;
+  function tiltKnee(v) {
+    const x = Number(v) || 0;
+    const s = x < 0 ? -1 : 1;
+    const a = Math.abs(x);
+    if (a <= TILT_KNEE) return x;
+    const top = 1 - TILT_KNEE;
+    return s * (1 - top * Math.exp(-(a - TILT_KNEE) / top));
+  }
+
   /* A nuvem é sorteada uma vez, e com semente: com Math.random() cada recarga
      dava outra distribuição de pontos e outra atribuição de fases, por isso o
      enquadramento e o brilho que se afinam numa tela não eram os que o público vê
@@ -514,7 +545,7 @@
 
   function lightDir(t, tiltY) {
     const az = LIGHT.azim + LIGHT.orbitAmp * Math.sin(t * LIGHT.orbitHz);
-    const el = LIGHT.elev + LIGHT.tiltPull * clamp(tiltY, -1, 1);
+    const el = LIGHT.elev + LIGHT.tiltPull * tiltY;
     const c = Math.cos(el);
     light[0] = c * Math.sin(az);
     light[1] = Math.sin(el);
@@ -832,17 +863,18 @@
     prec += dt * (0.35 + state.mid * 1.1);
     const wob = 0.018 + 0.017 * state.mid;
 
-    const tx = clamp(state.tiltX, -1.2, 1.2);
-    const ty = clamp(state.tiltY, -1.2, 1.2);
+    // G3: já vêm limitados a ±1 pelo joelho do funil (applyState)
+    const tx = state.tiltX;
+    const ty = state.tiltY;
 
     // 3/4: a base de ~1.02 rad (~58°) faz a câmara olhar para dentro da corola,
     // por isso o giroscópio e o mouse também inclinam a flor, não só o fundo
     const s = 0.82 * (0.98 + state.audio * 0.04 + state.pulse * 0.02);
     mat4Scale(model, s, s, s);
     mat4RotateY(rot, spin); mulLeft(model, rot);
-    mat4RotateZ(rot, tx * 0.25 + wob * Math.cos(prec)); mulLeft(model, rot);
+    mat4RotateZ(rot, tx * 0.30 + wob * Math.cos(prec)); mulLeft(model, rot);
     // os graves fazem a flor inclinar-se para a frente
-    mat4RotateX(rot, 1.02 + ty * 0.25 - state.bass * 0.10 + wob * Math.sin(prec)); mulLeft(model, rot);
+    mat4RotateX(rot, 1.02 + ty * 0.30 - state.bass * 0.10 + wob * Math.sin(prec)); mulLeft(model, rot);
     mat4Translate(rot, 0, 0.04 + camLift, 0); mulLeft(model, rot);
 
     const p = progPoints;
@@ -1054,8 +1086,8 @@
     // corola ler-se-ia com a fronteira trocada num navegador sem microfone
     if (obj.timbre != null) state.timbre = clamp(Number(obj.timbre) || 0, 0, 1);
     if (obj.tilt) {
-      state.tiltX = obj.tilt[0] || 0;
-      state.tiltY = obj.tilt[1] || 0;
+      state.tiltX = tiltKnee(obj.tilt[0]);
+      state.tiltY = tiltKnee(obj.tilt[1]);
     }
   }
 

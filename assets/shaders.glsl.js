@@ -56,8 +56,10 @@ float hash21(vec2 p) {
 void main() {
   float t = u_time * 0.3;
 
-  // a inclinação empurra o centro das formas
-  vec2 center = vec2(0.5) + u_tilt * 0.12;
+  // a inclinação empurra o centro das formas. G3: era 0,12 com um canal que chegava
+  // aqui a 1,5 e sem corte; agora o canal vem limitado a ±1 pelo funil do
+  // renderizador, por que o coeficiente sobe para manter o mesmo curso no fundo
+  vec2 center = vec2(0.5) + u_tilt * 0.18;
   // as ondas têm de ser circulares em pixels e não em uv: o uv achata o x numa
   // tela estreita, e em retrato as ondas liam-se como elipses deitadas. Multiplicar
   // o x pelo aspect devolve a isotropia e deixa o espaçamento vertical como foi

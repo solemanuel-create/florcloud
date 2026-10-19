@@ -47,6 +47,12 @@ Com **Ativar interações** ligado e música com grave e agudo separáveis:
 - [ ] **Luz do teto (M2)**: as três bandas no máximo têm de ficar **abaixo** do brilho anterior (medido −18% no frame inteiro), nunca acima. A conta do fecho de soma é obrigatória: sem ela o agudo a 1,0 dava +81% e 2,33% de píxeis queimados.
 - [ ] **A luz que anda engana as medidas (B2)**: a órbita lenta do direcional move a mediana do frame inteiro ao longo de ~2 min. Duas janelas de 21 s separadas por minutos não são um par — são duas amostras de duas luzes diferentes.
 - [ ] **Giroscópio**: incline o aparelho e segure-o assim 15–30 s → a flor volta a centrar-se devagar, ficando a pender pouco (8° de banda morta). Um gesto rápido de 0,5 s usa o curso todo e não é apagado.
+- [ ] **Um teto para os três (G3)**: com o **Sensibilidade ao giroscópio** em 1,5 (o de fábrica), incline devagar do neutro até ao limite do pulso e olhe **as três coisas ao mesmo tempo** — a flor, o centro das formas do fundo, e de que lado ela está acesa. **Nenhuma das três pode congelar enquanto as outras duas ainda se mexem.** Era este o defeito: a luz parava aos 26,4°, a flor aos 31,7°, o fundo aos 39,6°, e acima de 40° não se mexia nada em parte nenhuma.
+- [ ] **O meio do curso está mais vivo (G3)**: é aqui que a mexida se vê. À mesma inclinação de sempre (10–20° do aparelho), o centro das formas do fundo desloca-se **50% mais** e a flor inclina **20% mais** do que na build anterior; a luz não se mexe nenhuma. Compare as duas builds lado a lado se duvidar — é ganho de escala, não de forma.
+- [ ] **O topo do curso**: não procure diferença visível entre 40° e 70° — são **0,2° de flor** e **0,002 de uv**, e ninguém os vê. O que mudou lá em cima é estrutural: deixou de haver um muro, e os três chegam ao teto no mesmo ângulo (99% aos **41,4°**, o resto até `tiltMaxDeg`, 70°, que só corta um sensor avariado).
+- [ ] **Os máximos não mudaram (G3)**: com o **giroscópio**, ao fim do curso a flor inclina o mesmo de sempre (17,19°), o centro do fundo desloca os mesmos 0,18 de uv, a luz os mesmos 10,31°. Se alguma das três parecer **mais** torta do que na versão anterior, pare: os coeficientes subiram demais. No **rato/toque** o topo da luz é 9% mais baixo à sensibilidade 1 — é o preço do teto único no extremo do arrasto, está medido no CHANGELOG, não é uma regressão a concertar.
+- [ ] **Vigia do sensor (G5a)**: com o giroscópio ativo, deixe o aparelho absolutamente parado **7–8 s** (em alguns Androides o sensor pára de emitir). A flor tem de largar a pose e voltar ao centro, o rato/toque retoma o comando e a mensagem diz que o sensor não está disponível. Volte a inclinar: **retoma sozinha**, sem desativar e reativar nem recarregar.
+- [ ] **O vigia não fala à toa (G5a)**: a mensagem de "sensor indisponível" aparece **uma vez** por perda, não em loop; e um aparelho sem giroscópio nenhum não pode entrar a alternar entre as duas mensagens.
 - [ ] **Sala vazia, sem música**: a flor **não** pisca nem respira em pulso. O medidor mal se mexe.
 - [ ] **Medidor do microfone** (barra abaixo dos botões): sobe com a voz/música, encosta quase no fim num volume alto e volta a zero no silêncio. Aparece só depois de ativar.
 - [ ] **Vigia de sinal**: ative o microfone e faça silêncio total 5 s → aparece "Microfone ativo, mas não capta nada". Dê som → a mensagem volta à normal.
@@ -73,6 +79,7 @@ Em DevTools → modo dispositivo (ou redimensionando a janela):
 
 - [ ] 360 px: painel na largura toda, embaixo; botão com altura de toque confortável.
 - [ ] **Retrato (390×844 ou 360×780): a corola inteira cabe na tela** — as pontas das pétalas não são cortadas nas bordas, e com **graves no máximo** (sensibilidade 3, música com grave forte) continuam dentro.
+- [ ] **Retrato com o fundo inclinado (G3)**: o centro das formas do fundo desloca-se agora **0,18** de uv (antes 0,12, mas com um canal que chegava a 1,5 sem corte). Com a sensibilidade no máximo e o aparelho/arrasto todo para um canto, as ondas do fundo têm de continuar dentro da tela — sem deixar uma faixa vazia num lado e apertada no outro.
 - [ ] **Retrato**: a flor fica ligeiramente acima do centro, por cima do painel; o painel abre **recolido**, e o medidor continua visível.
 - [ ] **Deitado → em pé** (rodar o aparelho): o enquadramento muda e a flor passa a caber, sem recarregar.
 - [ ] 768 px: painel em cartão de 380 px no canto.
@@ -88,6 +95,8 @@ Em DevTools → modo dispositivo (ou redimensionando a janela):
 - [ ] Modo avião: o app abre do cache.
 - [ ] **Ativar interações**: aceitar microfone; o visual reage ao som.
 - [ ] Inclinar o aparelho move o centro das formas; deitar o celular continua coerente.
+- [ ] **Permissão tardia (G5a)**: ao tocar em **Ativar interações**, deixe o diálogo de permissão aberto **mais de 5 s** sem responder (ou responda só ao fim de meio minuto). O painel tem de dizer que o sensor não está disponível — e no instante em que der **Permitir**, a flor tem de começar a inclinar **sem desligar e ligar as interações e sem recarregar**, com a mensagem a voltar ao normal. Era este o buraco: o listener desinscrevia-se aos 1,5 s e a permissão tardia ficava muda para sempre.
+- [ ] **A pose da permissão é o neutro**: ao permitir com o telemóvel inclinado na mão, a flor não deve dar um salto para o lado quando o sensor entra em ação — começa onde está.
 - [ ] Sliders mudam a intensidade na hora (valores mostram 2 casas, ex. 1.50).
 - [ ] **Pontos pequenos no celular**: com a resolução interna a cair sozinha (apareço fraco) e **Intensidade da nuvem** em 0,5, a flor não ganha buracos pretos nem orlas a piscar — é a porta de pixels da elipse a segurar o eixo menor em 2 px.
 - [ ] Arrastar o dedo na tela move o centro.

@@ -177,11 +177,29 @@
     orientRecenter: 0.1,
     orientDeadband: 8,
 
-    // giroscópio: ±40° de inclinação percorrem o curso todo
+    // giroscópio: ±40° de inclinação percorrem o curso linear; o que houver acima
+    // disso soma muito pouco, porque o teto do canal é o ombro do funil, não este
+    // número. tiltMaxDeg é o único corte que resta.
     tiltRange: 40,
+    // G3 — desde que o teto do canal é um só e assintótico, este já não é um teto
+    // de resposta: é só a proteção contra um ângulo absurdo (um sensor avariado, ou
+    // um beta que salta para 180° quando o aparelho passa acima do teto). 70° fica
+    // muito acima de qualquer pose de uso e não corta nada do que se vê.
+    tiltMaxDeg: 70,
     tiltEase: 9,
+    // G5a — quantos segundos sem UM SOZINHO evento `deviceorientation` antes de dar
+    // o sensor por perdido. É generoso de propósito: um Android que agrupa leituras
+    // ou adormece o giroscópio com o aparelho parado pode calar-se um bocado, e um
+    // vigia impaciente estaria sempre a desligar e a religar o movimento. Perder é
+    // recuperável (o listener fica inscrito e o primeiro evento que chegue re-arma),
+    // por isso o único risco de esperar demasiado é a flor ficar pendurada na última
+    // pose um pouco mais.
+    orientStall: 6,
 
-    // ombro suave do read(): linear até aqui, exponencial depois
+    // ombro suave: linear até aqui, exponencial depois. É a forma do read() do
+    // áudio e, desde G3, também a do canal do tilt — lá em shaders.js, com o mesmo
+    // valor, porque os dois são o mesmo problema: um slider cujo topo encosta num
+    // clamp deixa de ser um slider.
     knee: 0.75,
   };
 
@@ -225,6 +243,15 @@
       this.audioOn = false;
       this.orientOn = false;
       this.orientSeen = false;
+      // G5a — orientOn diz que a subscrição está tomada; orientLive diz que o sensor
+      // está de facto a mandar dados. São duas coisas diferentes, e o renderizador
+      // precisa da segunda: é ela que decide se o inclinar vem do aparelho ou do
+      // rato/toque. Separá-las é o que permite perder o sensor sem desligar a sessão
+      // — se orientOn caísse, `active` caía com ele e o botão passava a oferecer
+      // "Ativar interações", que é um segundo start() por cima desta subscrição.
+      this.orientLive = false;
+      this._orientSilent = 0;
+      this._onGyro = null;
       this.base = null;
       this.baseAng = null;
       this.cur = { x: 0, y: 0 };
@@ -264,6 +291,7 @@
     /* Deve ser chamado dentro de um clique/toque: as duas permissões
        são pedidas de imediato, sem esperar uma pela outra (exigência do iOS). */
     async start(onGyro) {
+      this._onGyro = onGyro || null;
       const out = { audio: 'unsupported', orientation: 'unsupported' };
       if (!window.isSecureContext) {
         out.audio = out.orientation = 'insecure';
@@ -278,19 +306,34 @@
       this.orientOn = g === 'ok';
 
       if (this.orientOn) {
+        this.orientLive = true;
+        this._orientSilent = 0;
         window.addEventListener('deviceorientation', this._onOrient);
         // computadores disparam o evento sem valores: se nada útil chegar, avisa
+        // NESTE INSTANTE — mas o listener fica onde está, porque a janela de
+        // permissão do Android pode aparecer tarde e ser respondida depois deste
+        // prazo. Desinscrever aqui era o buraco: o utilizador dava "Permitir" ao
+        // segundo 3 e o giroscópio ficava surdo até desligar e ligar as interações.
         this._gyroTimer = setTimeout(() => {
-          if (!this.orientSeen) {
-            this.orientOn = false;
-            window.removeEventListener('deviceorientation', this._onOrient);
-            if (onGyro) onGyro('unavailable');
-          } else if (onGyro) {
-            onGyro('ok');
-          }
+          if (!this.orientSeen) this._loseOrient();
+          else if (onGyro) onGyro('ok');
         }, 1500);
       }
       return out;
+    }
+
+    /* G5a — dar o sensor por perdido, sem perder a sessão. O ponteiro passa a
+       conduzir a inclinação (orientLive é o que o app.js consulta), a base é
+       apagada para que a pose em que o sensor voltou valha como neutra em vez de
+       dar um salto, e a mensagem acompanha. Os dados que entretanto cheguem
+       re-armam tudo sozinhos em _onOrient(). */
+    _loseOrient() {
+      if (!this.orientLive) return;
+      this.orientLive = false;
+      this.base = null;
+      this.tgt.x = 0;
+      this.tgt.y = 0;
+      if (this._onGyro) this._onGyro('unavailable');
     }
 
     stop() {
@@ -358,6 +401,15 @@
     _onOrient(e) {
       if (e.gamma == null || e.beta == null) return;
       this.orientSeen = true;
+      this._orientSilent = 0;
+      // G5a — o sensor volta sozinho: foi dado por perdido pelo vigia de 1,5 s (a
+      // janela de permissão ainda aberta) ou pelo de silêncio, e o primeiro ângulo
+      // útil que chegue re-arma sem pedir nada ao utilizador. Fica fora se nunca
+      // houve subscrição (permissão negada ou navegador sem DeviceOrientation).
+      if (this.orientOn && !this.orientLive) {
+        this.orientLive = true;
+        if (this._onGyro) this._onGyro('ok');
+      }
       const ang = this._angle();
       let ax = e.gamma;
       let ay = e.beta;
@@ -593,6 +645,17 @@
         this.hit3Flag = true;
       }
 
+      /* G5a — vigia de silêncio: um sensor que cala deixa a flor pendurada na última
+         pose com a mensagem a dizer "Ativo". É o caso do iOS que corta o
+         deviceorientation ao fim de um tempo e do Android que adormece o
+         giroscópio com o aparelho parado. dt é o tempo de animação, não o tempo
+         real: se a aba estiver escondida não há frames e nada se acumula, por isso
+         a volta de um telemóvel bloqueado não acorda este vigia. */
+      if (this.orientLive) {
+        this._orientSilent += dt;
+        if (this._orientSilent > TUNE.orientStall) this._loseOrient();
+      }
+
       this._recenter(dt);
       const k = 1 - Math.exp(-dt * TUNE.tiltEase);
       this.tilt.x += (this.tgt.x - this.tilt.x) * k;
@@ -603,8 +666,9 @@
        isso segurar o telemóvel inclinado deixa de deixar a flor pendurada para
        sempre. A banda morta é o que separa isso de apontar: sem ela, o gesto que se
        mantém dez segundos apaga-se a si próprio a meio. O equilíbrio é um desvio de
-       exatamente orientDeadband — uma pose largada fica sempre a pender oito graus,
-       que é o suficiente para se ler como intenção e não como defeito. */
+       exatamente orientDeadband — uma pose largada fica sempre a pender oito graus
+       do aparelho, que são 5,2° de flor à sensibilidade de fábrica: o suficiente
+       para se ler como intenção e não como defeito. */
     _recenter(dt) {
       if (!this.base) {
         this.tgt.x = 0;
@@ -619,15 +683,27 @@
         if (Math.abs(dx) > db) this.base.x += (dx - Math.sign(dx) * db) * k;
         if (Math.abs(dy) > db) this.base.y += (dy - Math.sign(dy) * db) * k;
       }
-      this.tgt.x = clamp(dx / TUNE.tiltRange, -1, 1);
-      this.tgt.y = clamp(dy / TUNE.tiltRange, -1, 1);
+      /* G3 — o desvio já não é cortado aqui. Este clamp aos ±1 era o TETO VERDADEIRO
+         de todo o canal: acima de tiltRange graus de aparelho nada se mexia em parte
+         nenhuma, por mais que os consumidores tivessem os seus cortes ou que a
+         sensibilidade subisse — o slider mexia só no ângulo a que se chegava ao fim,
+         nunca no fim. O teto passa a haver um só, no funil (tiltKnee em shaders.js),
+         e é assintótico: o curso continua a ter declive em todo o lado e os três
+         consumidores deixam de congelar a três ângulos diferentes. Limitar o ângulo
+         bruto é o que basta para um sensor avariado não deitar tudo abaixo. */
+      this.tgt.x = clamp(dx, -TUNE.tiltMaxDeg, TUNE.tiltMaxDeg) / TUNE.tiltRange;
+      this.tgt.y = clamp(dy, -TUNE.tiltMaxDeg, TUNE.tiltMaxDeg) / TUNE.tiltRange;
     }
 
     /* Valores prontos para o shader, já com a sensibilidade aplicada.
-       Tudo limitado a 0..1: os coeficientes dos shaders foram desenhados para
-       esse intervalo. O topo é feito com ombro suave em vez de clamp, para que o
-       curso inteiro do slider sirva para alguma coisa e a música alta continue a
-       ter dinâmica em vez de encostar no teto. */
+       Os canais de áudio vão todos a 0..1: os coeficientes dos shaders foram
+       desenhados para esse intervalo. O topo é feito com ombro suave em vez de
+       clamp, para que o curso inteiro do slider sirva para alguma coisa e a música
+       alta continue a ter dinâmica em vez de encostar no teto.
+           O tilt é o único que sai daqui sem limite: tem dois caminhos até ao
+       shader — o giroscópio passa por read(), o rato e o toque (app.js) não passam
+       — e um teto posto aqui só valeria para um dos dois. O teto partilhado vive no
+       funil onde os dois se encontram (tiltKnee, em shaders.js). */
     read() {
       const g = this.audioSens;
       const c = (v) => softKnee(v * g, TUNE.knee);
@@ -651,8 +727,8 @@
         // 0,5 sem microfone: o timbre é a única leitura que existe mesmo quando o
         // áudio está desligado, e tem de dizer "neutro" e não "grave" ou "agudo"
         timbre: clamp(this.timbre, 0, 1),
-        tiltX: clamp(this.tilt.x * this.orientSens, -2, 2),
-        tiltY: clamp(this.tilt.y * this.orientSens, -2, 2),
+        tiltX: this.tilt.x * this.orientSens,
+        tiltY: this.tilt.y * this.orientSens,
       };
     }
   }

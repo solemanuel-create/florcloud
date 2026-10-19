@@ -4,6 +4,106 @@ Formato seguido: uma entrada por mudança de visual ou de estrutura, com o `CACH
 correspondente do `service-worker.js` — é ele que diz ao browser para deitar fora a
 versão guardada.
 
+## 2026-10-19 — um teto só para a inclinação, e o giroscópio que volta (`v1su4rt-v22`)
+
+Lote G3 + G5a, os dois primeiros do diagnóstico do giroscópio. Nada aqui mexe na cor nem no
+mapa frequência↔raio: mexe na **curva** do tilt e na **vida** do sensor.
+
+**G3 — o canal do tilt tinha quatro cortes em série e nenhum deles era combinado.** O
+`_recenter` cortava o alvo a ±1 (40° de aparelho), o `read()` cortava a ±2, a flor cortava a
+±1,2, a luz de teto cortava a ±1, e o fundo do ecrã não cortava em lado nenhum. À
+sensibilidade de fábrica isto dava três ângulos de paragem diferentes — a luz parava aos
+**26,4°**, a flor aos **31,7°**, o fundo aos **39,6°** — e depois, acima de 40°, nada se mexia
+em parte nenhuma. É o mesmo mal que o `knee` do `read()` resolveu no áudio e que nunca foi
+aplicado ao tilt.
+
+- O joelho vive no **funil** (`tiltKnee` em `applyState`, `assets/shaders.js`) e não no
+  `read()`, porque o tilt tem dois caminhos: o giroscópio passa por `read()`, o rato e o toque
+  (`assets/app.js`) não passam. No funil passam os dois, por isso os dois ficam com o mesmo
+  teto. Assinatura: `±`, linear até 0,75 (o mesmo valor do `knee` do áudio), assintótico a ±1.
+- **O primeiro A/B desfez o plano.** Com os coeficientes como estavam, o ombro novo baixava os
+  tetos — flor **−16,7%**, fundo **−33,3%** — porque o `clamp` de `applyState` era um muro
+  *abaixo* do novo teto assintótico. Por isso os coeficientes subiram para que cada consumidor
+  conserve o máximo que já tinha: flor 0,25 → **0,30** rad (o corte dela em 1,2 valia
+  exatamente 0,30), luz fica em **0,18**, fundo 0,12 → **0,18** uv (a 1,5 dava 1,5×0,12 = 0,18).
+  Os três tetos medidos depois: **17,19° / 10,31° / 0,1800 uv** — os mesmos de antes, ao décimo.
+- **Com o rato/toque o quadro é outro, e há que dizê-lo**: o ponteiro está limitado a |p| = 1,
+  por isso à sensibilidade 1 ele bate exatamente no velho `±1` da luz. Depois do ombro, o topo
+  do curso fica **9,36° de luz em vez de 10,31°** (−9%), e a 1,5 **10,18 em vez de 10,31** (−1,3%);
+  a flor compensa no mesmo ponto — **15,61° em vez de 14,32°** a sens 1, 8,59 em vez de 7,16 a 0,5.
+  Os tetos conservados do parágrafo acima são os do **giroscópio**, que pode ir além do joelho.
+  Nenhum deles é um corte novo: é o preço de um só teto para os três, e aparece só no extremo do
+  arrasto, nunca a meio do curso.
+- **O que se mexe é o meio do curso, sempre para cima.** Entre 1° e 20° de aparelho (a zona
+  linear de fábrica) o quociente depois/antes é **constante**: flor 1,200, luz 1,000, fundo
+  1,500. É ganho puro, a forma é a mesma. A 10°: flor 6,45° em vez de 5,37°, luz 3,87° (não se
+  mexe), fundo 0,0675 em vez de 0,0450.
+- **O slider voltou a ser um slider, e isso também mudou tetos.** Abaixo da sensibilidade de
+  fábrica o muro dos ±1 — que estava monte acima, *antes* da sensibilidade — cortava o curso
+  todo, por isso descer o slider encolhia o máximo em vez de encolher só a pressa de lá chegar:
+  à sensibilidade 1 o teto era **14,32° de flor e 0,1200 uv de fundo**, e passou a ser
+  **17,11° e 0,1792** — o curso de fábrica, disponível a qualquer sensibilidade. Acima dela é
+  ao contrário: o fundo, que era o único que continuava a acelerar quando tudo o resto já tinha
+  chegado, passa a parar no seu máximo desenhado — a 2 dava **0,24 uv**, a 3 dava **0,36**, e as
+  duas ficam agora em **0,18**. Os dois efeitos são a mesma mexida vista de lados opostos do
+  slider, e é por isso que ele volta a significar alguma coisa.
+- Acima do fim do curso linear o visual **não congela**: os três chegam a 99% do seu teto no
+  mesmo ângulo (**41,4°**) e continuam a responder até ao teto bruto. A zona morta de cada um,
+  à sensibilidade de fábrica, passa de **58° a partir dos 33°** (flor), **63° a partir dos 28°**
+  (luz) e **50° a partir dos 41°** (fundo) para **23° a partir dos 68°**, **27° a partir dos
+  64°** e **27° a partir dos 64°** — três ângulos de paragem diferentes viraram um só, e ficou
+  a ser o do sensor, não o do shader.
+- `tiltMaxDeg: 70` substitui o ±1 do `_recenter`: deixou de ser um teto de resposta (que o
+  funil já dá) e passou a ser só a proteção contra um ângulo absurdo — um `beta` que salta
+  quando o aparelho passa acima do teto.
+- **Não verificável píxel a píxel neste ambiente**: a diferença do meio do curso é de 1–2° de
+  flor, e a rotação mais a órbita da luz (B2, ±15° em ~126 s) movem a mediana do frame mais do
+  que isso. A prova é a curva medida no código real (`_knee.mjs`, tabela abaixo), não o
+  screenshot.
+
+**G5a — o vigia de 1,5 s desligava o ouvido do aparelho.** Se nada chegava nesse prazo, o
+`start()` fazia `removeEventListener('deviceorientation')`. Num Android cuja janela de
+permissão aparece e é respondida tarde, o utilizador dava "Permitir" ao segundo 3 e o
+giroscópio ficava **mudo até desligar e ligar as interações**. E o vigia nunca mais olhava
+para o sensor: um iOS que corta os eventos ao fim de um tempo deixava a flor pendurada na
+última pose com a mensagem a dizer "Ativo".
+
+- `orientOn` (a subscrição está tomada) passou a ser **duas coisas** com `orientLive` (o sensor
+  está de facto a mandar dados). O listener nunca é desinscrito enquanto a sessão vive; o
+  primeiro ângulo útil **re-arma sozinho** e repõe a mensagem. É `orientLive` que o ponteiro
+  consulta em `assets/app.js`, por isso o rato continua a substituir o sensor durante o tempo
+  em que ele está calado.
+- Separar as duas flags é também o que impede um segundo `start()` por cima da primeira
+  subscrição: se `orientOn` caísse, `active` caía com ele e o botão passava a dizer "Ativar
+  interações", que é exatamente o botão que acrescenta outro listener.
+- Vigia de silêncio: **6 s** de animação sem um único evento (`TUNE.orientStall`) dão o sensor
+  por perdido **uma** vez — sem spam de mensagens, porque a perda é idempotente —, largam a
+  pose (alvo a zero, a flor volta ao centro com o `tiltEase` de sempre) e apagam a base, para
+  que a pose em que o sensor voltou valha como neutra em vez de dar um salto. Conta em `dt` de
+  animação, não em tempo real: aba escondida não acumula, por isso a volta de um telemóvel
+  bloqueado não acorda o vigia.
+- **Headless** (`_g5.mjs`, o `V1Interaction` real com um browser fingido): **19/19**, incluindo
+  "concessão tardia re-arma sozinha", "o sensor perdido uma vez não é anunciado 60 vezes",
+  "o regresso não dá salto" e "re-ativar não duplica o listener".
+- **No browser real**, com `DeviceOrientationEvent` disparado de verdade e o microfone negado:
+  os relatos saem `unavailable → ok → unavailable → ok`, a base do rearme é a pose de chegada
+  (30/80) e o alvo fica 0. O mesmo guião corrido contra a build `v21` fica em `unavailable`
+  para sempre — o buraco reproduzido com eventos do DOM, não em simulação.
+
+**Medição** (`_knee.mjs`, 1° a 90°, sens 1/1,5/2/3): funil `tiltKnee(x) === x` para |x| ≤ 0,75
+com desvio máximo **0,00e+0** (lido do ficheiro, não copiado); `scripts/check.mjs` verde com
+`fundo(8 uniformes, 1 atributos)` e `nuvem(23, 7)` inalterados; regressões do áudio **11/11**
+(`_m1.mjs`) e **12/12** (`_s2.mjs`) — o `read()` foi tocado no comentário e na forma do tilt, e
+os detetores não mudaram de comportamento; na página, com o ponteiro nos quatro cantos,
+**zero píxeis queimados** e a mediana do frame dentro do costume.
+
+**O que não foi verificado:** nada disto foi sentido num celular. Fica por medir (1) se o Chrome
+de Android continua mesmo a emitir `deviceorientation` com o aparelho parado — o limiar de 6 s
+é generoso de propósito e a perda é recuperável, mas é uma hipótese, não uma medida; (2) se a
+janela de permissão do Android/iOS pode realmente chegar depois de 1,5 s, que é a razão de ser
+do rearme; (3) se o fundo com o novo `u_tilt * 0,18` não corta nas bordas em retrato, que é o
+que `TESTES.md` §2 pergunta.
+
 ## 2026-10-19 — o instante dos médios e a cor por banda como destino (`v1su4rt-v21`)
 
 Lote M1 + M2, o que sobrava do diagnóstico de sincronia depois de O5/O1 terem deixado o
