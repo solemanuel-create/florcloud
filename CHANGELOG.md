@@ -4,6 +4,78 @@ Formato seguido: uma entrada por mudança de visual ou de estrutura, com o `CACH
 correspondente do `service-worker.js` — é ele que diz ao browser para deitar fora a
 versão guardada.
 
+## 2026-10-19 — o instante dos médios e a cor por banda como destino (`v1su4rt-v21`)
+
+Lote M1 + M2, o que sobrava do diagnóstico de sincronia depois de O5/O1 terem deixado o
+envelope a uma frame do som. Um lote só, um A/B de luz só.
+
+**M1 — o caminho rápido passou a ter três baldes.** Com um só corte a 250 Hz, tudo o que não
+era grave caía no mesmo balde, e os médios — a banda onde mora a voz e a melodia — ficaram sem
+instante: o `shimmer`, o `sway` e o `roll` do shader corriam à senoide de `u_time` e o som só
+lhes pegava na amplitude, exatamente o defeito que o S1 tinha tirado do grave e do prato.
+
+- Um segundo lowpass de um polo a **1200 Hz**, na mesma passagem, dá o balde do meio **por
+  diferença** entre os dois (`lpMid - lp`), sem tocar nos dois que já estavam medidos: o grave
+  continua a ser `lp`, o agudo `v - lp`. `pkMid` entra com `hitFloorMid: 0.09` (medido: o topo
+  do balde com ruído branco é 0,011 a −32 dBFS, 0,020 a −26 e 0,043 a −20; um ataque a sério dá
+  0,24–0,26) e `hitBalanceMid: 1.0`.
+- **Por que 1.0 e não o 1,4 do contratempo**: o filtro é de um polo, cai 6 dB por oitava, por
+  isso os baldes solapam-se — um ataque a 400 Hz deixa **96%** do seu pico no balde do grave
+  (topo lo 0,243 contra mid 0,254) e nunca chegaria lá. O que o 1,0 ainda garante é o que
+  importa: um bombo não tem balde do meio (a 55 Hz, lo 0,488 contra mid 0,155).
+- Sai `hit3`, entra `u_hit3T` (23º uniforme do `nuvem`), carimbado no mesmo `frame()` dos
+  outros dois. **Não há `pulse3`**: este canal não soma uma calorie ao frame, só põe um
+  relógio. Por isso o A/B de luz não o vê.
+- **Headless** (`_m1.mjs`, 11 casos): 11/11, com a fase dos seis ataques médios a **0,017 s** —
+  uma frame a 60 Hz. A armação do S2 continua **12/12**, ou seja, os dois detetores que já
+  existiam não mudaram de comportamento.
+- **No browser**, com a régua: `v1su4rtProbe.run({ hz: 700 })` dá `hit3Ms` **7,5** e
+  `midStampMs` **14,2** — uma frame a 145 fps entre o disparo e o carimbo, e `jit` do médio 0;
+  com `{ hz: 60 }` os dois campos saem `null` (`hitMs` 6,9), que é a separação dos baldes
+  verificada sem sair do navegador. Baseline das bandas inalterado, fps 144–145, `renderer()` =
+  `webgl`, consola limpa.
+- **A régua estava a mentir, e foi preciso concertá-la primeiro**: sintetizava o degrau
+  repetindo o mesmo valor por toda a janela do `AnalyserNode`. Para o grave isso é invisível,
+  mas os dois lowpass convergem dentro do frame e o balde do médio — que é a diferença entre
+  eles — só via o transitório de convergência, pelo que `hit3Ms` saía `null` com o detetor
+  sadio. Agora cada amostra é um ponto diferente da senoide, e é isso que faz `hz` escolher que
+  detetor se está a testar.
+
+**M2 — a cor de cada banda deixou de ser tinta e passou a ser destino.** Grave → magenta na
+borda de fora, agudo → ciano no miolo, médio → **nenhuma cor**, que é o que "neutro" queria
+dizer na linguagem escolhida para este lote: ele é a banda da luz no rebordo e do movimento com
+instante próprio, não da matiz.
+
+- Os dois termos que existiam (`vec3(0.22,0.10,0.04)` de agudos e `vec3(0.10,0.17,0.04)` de
+  médios) somavam-se **antes** da rotação de Rodrigues, portanto rodavam com a paleta. Medido
+  com o `mixCor` a atravessar o slider, o vetor de cor normalizado (R,G,B)/soma mudava **0,64 a
+  0,72** por banda: a meio do curso o magenta e o ciano caíam os dois na mesma família
+  azul-verde, e a cor da banda parava de significar o que diz. Como destino, depois da rotação,
+  a mesma travessia custa **0,14** no grave e **0,17** no agudo — e o silêncio continua os
+  mesmos **0,68** de sempre, porque a rotação da paleta não foi tocada.
+- **O fecho de soma é obrigatório**: misturar para um destino claro soma luz. Sem repetir o par
+  `sAntes`/`sDepois` do B3 depois do `mix`, o frame do agudo a 1,0 valia **+81%** de média e
+  tinha **2,33%** de píxeis queimados. Com ele, o A/B emparceirado deu (média dos três canais no
+  frame inteiro, microfone substituído por bandas fixas): silêncio **48,35 → 48,34** (idêntico,
+  como tem de ser — sem bandas não há pesos), grave **50,01 → 50,10** (+0,2%), agudo
+  **75,07 → 73,40** (−2,2%), médio **68,81 → 61,13** (−11,2%, por sair a tinta verde sem
+  destino nenhum), teto **78,62 → 64,32** (−18,2%). Píxeis queimados: **0,104%** no pior pin,
+  0,001% no teto.
+- Ao contrário do lote anterior, este A/B fez-se com o microfone fechado: pela primeira vez as
+  bandas foram fixadas por um driver falso em vez de dependerem do som, e a medição saiu
+  determinística — o par de controlo `antes → depois → antes` mexeu **0,01** em toda a matriz,
+  órbita lenta do direcional incluída. Ficámos 18% abaixo do teto antigo no pin mais carregado,
+  e é a direção certa: margem de luz gasta-se com o microfone, não com a mistura.
+
+**Documentação**: o `README` passa a dizer **três** detetores, descreve os dois cortes e o empate
+a 1,0, e a secção de testes tem agora um item por banda — o `hit3Ms`/`midStampMs` da régua, a
+legibilidade dos dois anéis de cor, e o "a cor da banda não roda com o slider", que é o defeito
+que a M2 fechou. `CACHE_NAME` sobe a `v1su4rt-v21`.
+
+**O que não foi verificado**: nada disto foi ouvido num celular. A separação dos baldes em música
+real, a leitura do magenta e do ciano num ecrã pequeno e o custo de mais um uniforme por frame
+continuam a pedir o aparelho.
+
 ## 2026-10-19 — uma régua para o atraso, e as bandas a chegar uma frame mais cedo (`v1su4rt-v20`)
 
 Lote O5 + O1, escolhido depois de um diagnóstico pedido porque a sincronia ainda não estava boa

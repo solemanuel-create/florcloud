@@ -292,6 +292,7 @@
       // pelo próximo zero de uma senoide que corre à margem do que se ouve
       hit: s.hit || tapHit,
       hit2: s.hit2,
+      hit3: s.hit3,
       timbre: s.timbre,
       tilt: [tiltX, tiltY]
     };
@@ -369,8 +370,17 @@
           const now = performance.now() - t0;
           if (!onsetAt && now >= 60) onsetAt = now;
           if (!onsetAt) { arr.fill(128); return; }
+          const tSec = (now - onsetAt) / 1000;
+          /* Cada amostra tem de ser um ponto DIFERENTE da senoide. Com o valor
+             repetido ao longo da janela — como a régua fazia — os dois lowpass do
+             caminho rápido convergem para o mesmo número dentro do frame, e o balde
+             do médio, que é exatamente a diferença entre eles, só veria o transitório
+             de convergência: um passo a 60 Hz media-se bem assim (é grave por
+             construção), um tom a 700 Hz dava `hit3Ms: null` e a régua acusava o
+             detetor de não existir onde era o sinal que estava mal sintetizado. */
           for (let i = 0; i < arr.length; i++) {
-            arr[i] = Math.round(128 + 127 * amp * Math.sin(2 * Math.PI * hz * (now - onsetAt) / 1000));
+            const t = tSec - (arr.length - 1 - i) / SR;
+            arr[i] = t < 0 ? 128 : Math.round(128 + 127 * amp * Math.sin(2 * Math.PI * hz * t));
           }
         },
       };
@@ -385,6 +395,7 @@
           t: performance.now() - t0,
           audio: s.level, bass: s.bass, mid: s.mid, treble: s.treble,
           hit: s.hit ? 1 : 0, beat: sh ? sh.beat : -1,
+          hit3: s.hit3 ? 1 : 0, mid3: sh ? sh.mid : -1,
         });
         return s;
       };
@@ -403,8 +414,9 @@
       sensors.sm = { level: 0, bass: 0, mid: 0, treble: 0 };
       sensors.timbre = 0.5;
       sensors.timbreTgt = 0.5;
-      sensors.hitLo = 0; sensors.hitHi = 0;
-      sensors.hitLoNoise = 0; sensors.hitHiNoise = 0;
+      sensors.hitLo = 0; sensors.hitHi = 0; sensors.hitMid = 0;
+      sensors.hitLoNoise = 0; sensors.hitHiNoise = 0; sensors.hitMidNoise = 0;
+      sensors.beat3Hold = 0;
 
       const n = rows.length;
       const tail = rows.slice(Math.floor(n * 0.7));
@@ -430,6 +442,11 @@
       };
       const hit = rows.find((r) => r.hit);
       const stamped = rows.find((r) => r.beat >= 0 && r.beat < 0.05);
+      // M1 — o mesmo par para os médios. Com o degrau a 60 Hz o grave domina o balde
+      // do meio e `hit3Ms` sai null: é por isso que a régua dos médios se corre com
+      // `{ hz: 700 }`, que cai no intervalo 250–1200 e não no dos graves.
+      const hit3 = rows.find((r) => r.hit3);
+      const stamped3 = rows.find((r) => r.mid3 >= 0 && r.mid3 < 0.05);
       const out = {
         frames: n,
         fps: n > 1 ? +(n / (rows[n - 1].t / 1000)).toFixed(0) : 0,
@@ -440,6 +457,8 @@
         jit: { audio: +jit('audio').toFixed(3), bass: +jit('bass').toFixed(3), mid: +jit('mid').toFixed(3), treble: +jit('treble').toFixed(3) },
         hitMs: hit ? +(hit.t - onsetAt).toFixed(1) : null,
         stampMs: stamped ? +(stamped.t - onsetAt).toFixed(1) : null,
+        hit3Ms: hit3 ? +(hit3.t - onsetAt).toFixed(1) : null,
+        midStampMs: stamped3 ? +(stamped3.t - onsetAt).toFixed(1) : null,
       };
       console.table(out);
       return out;

@@ -538,7 +538,7 @@
   let buildMs = 0; // milissegundos de tela em branco gastos a construir a nuvem
   let headPoints = 0; // B4: quantos pontos moram na cabeça e foram reindexados no disco
 
-  const state = { audio: 0, bass: 0, mid: 0, treble: 0, pulse: 0, pulse2: 0, timbre: 0.5, tiltX: 0, tiltY: 0, cloud: 1, mixCor: 0, mixForm: 0, hitT: 0, hit2T: 0, hitPend: false, hit2Pend: false };
+  const state = { audio: 0, bass: 0, mid: 0, treble: 0, pulse: 0, pulse2: 0, timbre: 0.5, tiltX: 0, tiltY: 0, cloud: 1, mixCor: 0, mixForm: 0, hitT: 0, hit2T: 0, hit3T: 0, hitPend: false, hit2Pend: false, hit3Pend: false };
 
   // escala do flash e do contratempo, separada do timeScale: prefers-reduced-motion
   // pode abrandar o movimento sem deixar um estroboscópio de tela cheia a 1,0
@@ -655,7 +655,7 @@
       [
         'u_proj', 'u_view', 'u_model', 'u_normalMat', 'u_eye', 'u_light', 'u_time', 'u_audio', 'u_bass',
         'u_mid', 'u_treble', 'u_pulse', 'u_pulse2', 'u_timbre', 'u_phase', 'u_cloud', 'u_size', 'u_maxPx',
-        'u_mixCor', 'u_mixForm', 'u_hitT', 'u_hit2T',
+        'u_mixCor', 'u_mixForm', 'u_hitT', 'u_hit2T', 'u_hit3T',
       ],
       'nuvem'
     );
@@ -874,6 +874,7 @@
     // shader só usa a diferença, por isso o valor absoluto não interessa
     gl.uniform1f(p.uniform.u_hitT, state.hitT);
     gl.uniform1f(p.uniform.u_hit2T, state.hit2T);
+    gl.uniform1f(p.uniform.u_hit3T, state.hit3T);
     bindPoints(p);
 
     // aditivo: as camadas de pontos somam-se, e é isso que faz as pétalas
@@ -902,6 +903,7 @@
        num ponto arbitrário da senoide do relógio corrido. */
     if (state.hitPend) { state.hitT = time; state.hitPend = false; }
     if (state.hit2Pend) { state.hit2T = time; state.hit2Pend = false; }
+    if (state.hit3Pend) { state.hit3T = time; state.hit3Pend = false; }
     tuneQuality(dt);
 
     // só a cor: nada nesta cena escreve profundidade, por isso não há depth buffer
@@ -1047,6 +1049,7 @@
     // frame avançar, onde é carimbada (ver frame())
     if (obj.hit) state.hitPend = true;
     if (obj.hit2) state.hit2Pend = true;
+    if (obj.hit3) state.hit3Pend = true;
     // sem canal de timbre no driver, fica onde estava: 0 daria "tudo graves" e a
     // corola ler-se-ia com a fronteira trocada num navegador sem microfone
     if (obj.timbre != null) state.timbre = clamp(Number(obj.timbre) || 0, 0, 1);
@@ -1090,7 +1093,7 @@
     seedHeadPoints: function () { return headPoints; },
     // diagnóstico da sincronia: quanto tempo de animação passou desde cada golpe.
     // É o número que prova que a fase está presa — tem de cair a 0 no frame do golpe.
-    sinceHits: function () { return { beat: time - state.hitT, off: time - state.hit2T, time: time }; },
+    sinceHits: function () { return { beat: time - state.hitT, off: time - state.hit2T, mid: time - state.hit3T, time: time }; },
     // quanto custou desenhar a flor em CPU, em ms: é o número a olhar antes de se
     // decidir se a construção precisa de um worker
     buildTime: function () { return buildMs; },

@@ -147,6 +147,11 @@ uniform float u_pulse2;
    som", e nenhum valor de ataque corrige isso — o que faltava era um instante. */
 uniform float u_hitT;
 uniform float u_hit2T;
+/* M1 — o mesmo para os MÉDIOS. Antes deste uniforme, as três coisas que a banda do
+   meio mexia (shimmer, sway, roll) corriam à senoide de u_time: o som punha-lhes
+   a amplitude, mas o instante era do relógio, exatamente o defeito que o S1 tirou do
+   grave e do prato. Não é mais luz: é um relógio a mais. */
+uniform float u_hit3T;
 uniform float u_timbre;
 uniform float u_phase;
 uniform float u_cloud;
@@ -224,10 +229,16 @@ void main() {
      continua a correr depois do som já ter parado. */
   float sinceBeat = u_time - u_hitT;
   float sinceOff = u_time - u_hit2T;
+  float sinceMid = u_time - u_hit3T;
   float ripple = sin(r * 9.0 - sinceBeat * 5.5) * u_pulse * 0.075;
   float breath = mix(u_treble, u_bass, xover) * 0.10;
-  float shimmer = sin(p.y * 18.0 + u_time * 3.0 + r * 12.0) * u_mid * 0.012;
-  float sway = sin(az * 6.0 + u_time * 2.2) * u_mid * 0.035;
+  /* M1 — as três tomadas pelo relógio do médio, não pelo corrido. No frame do ataque
+     médio os três valem o seu padrão espacial (o seno fica sem termo de tempo), e é
+     daí que a viagem começa: um acorde, uma sílaba cantada ou um puxar de corda põem a
+     corola a ondular naquele instante, em vez de apanharem a senoide onde ela estava.
+     A amplitude é a mesma de sempre, por isso o orçamento de luz não vê diferença. */
+  float shimmer = sin(p.y * 18.0 + sinceMid * 3.0 + r * 12.0) * u_mid * 0.012;
+  float sway = sin(az * 6.0 + sinceMid * 2.2) * u_mid * 0.035;
   /* C1 — dobra das lâminas em tempo real. O open * 0.42 * r de cima é linear no
      raio: a pétala sobe inteira, como uma tábua articulada na base. Este termo é
      quadrático, por isso levanta só as pontas — é o que uma corola faz quando abre a
@@ -238,7 +249,7 @@ void main() {
      também corre em azimute, mas mexe só na altura; este mexe na espessura da lâmina,
      por isso lê-se como um calafrio que a atravessa e não como a flor a abanar.
      Vem ponderado por floral: caule e folhas ficam quietos. */
-  float roll = sin(az * 3.0 + r * 5.0 - u_time * 1.1) * u_mid * 0.022 * floral;
+  float roll = sin(az * 3.0 + r * 5.0 - sinceMid * 1.1) * u_mid * 0.022 * floral;
   p.xz += dir * (open + breath) * r * 0.55;
   p.y += ripple + open * 0.42 * r + bend + shimmer + sway * (0.25 + r);
   p += n0 * roll;
@@ -359,8 +370,11 @@ void main() {
   // propósito no miolo e forte na borda: é a orla de cada lâmina, vista de topo,
   // que tem de acender para a pétala ler como película atravessada pela luz.
   col += mix(vec3(1.00, 0.58, 0.12), vec3(0.86, 0.24, 0.10), r) * fres * (0.11 + 0.26 * r + u_mid * 0.35);
-  col += vec3(0.22, 0.10, 0.04) * u_treble * (1.0 - r) * floral;
-  col += vec3(0.10, 0.17, 0.04) * u_mid * (1.0 - r * 0.4) * 0.55;
+  /* M2 — os dois termos de cor de banda que aqui estavam (o castanho dos agudos e o
+     verde dos médios) saíram, e não é limpeza: somados À cor de base são tinta, e a
+     tinta é rodada pelo u_mixCor junto com a paleta. Medido hoje, com o slider a 1 o
+     grave magenta e o agudo ciano caíam os dois na mesma família azul-verde. A cor de
+     cada banda passou para depois da rotação, como destino. Ver o bloco no fim. */
   col += vec3(0.50, 0.26, 0.10) * u_pulse * (0.30 + 0.50 * r);
   // o fumo já desfeito aclara e perde saturação, como a fumaça apanhada pela luz
   col = mix(col, vec3(0.86, 0.52, 0.30), frag * age * 0.40);
@@ -425,6 +439,36 @@ void main() {
   float sAntes = dot(min(col, vec3(1.0)), vec3(1.0));
   float sDepois = dot(min(rot, vec3(1.0)), vec3(1.0));
   col = rot * (sAntes / max(sDepois, 0.001));
+
+  /* M2 — a cor de cada banda é um DESTINO, não uma tinta somada, e vive DEPOIS da
+     rotação da paleta. A razão é medida, não de gosto: com as tintas somadas antes da
+     rotação, o vector de cor normalizado (R,G,B)/soma mudava 0,64 a 0,72 entre o
+     mixCor a 0 e a 1 — ou seja, a cor da banda parava de significar o que diz a meio
+     do slider. Como destino, a mesma travessia custa 0,14 no grave e 0,17 no agudo, e
+     no silêncio continua os mesmos 0,68 de sempre: a rotação da paleta não foi
+     tocada, só deixou de arrastar as bandas consigo.
+        Os pesos usam o MESMO xover que a geometria já usa para decidir quem
+     manda em cada raio — grave na borda, agudo no miolo — por isso a fronteira das
+     cores anda com a fronteira do movimento quando o timbre a desloca, e floral fecha
+     tudo à corola: o caule e as folhas ficam com a cor que têm, que é a única coisa
+     que ainda diz que isto é uma planta.
+        O médio não tem destino de cor, de propósito: na linguagem escolhida para este
+     lote ele é neutro, e já é a banda que mais luz acrescenta ao rebordo (o fresnel
+     leva u_mid * 0.35) e a que mexe na geometria com um instante próprio (M1). Uma
+     tinta por cima vinha somar-se a isso e tirar-lhe o que o neutro tem de melhor: a
+     leitura de voz. Medido com âmbar (1,00 0,72 0,10), o vector de cor do pin do médio
+     a repouso de cor ficava a 0,16 do vector do silêncio — não era uma cor nova, era a
+     mesma flor um pouco mais quente.
+        O fecho de soma é obrigatório. Misturar para um destino claro soma luz: medido
+     na prévia, sem este par, o frame do agudo a 1,0 valia +81% de média e tinha 2,33%
+     de píxeis queimados. É o mesmo par sAntes/sDepois de B3 repetido depois do mix, e
+     faz deste bloco uma redistribuição de matiz com a luz de cada ponto intacta. */
+  float wGrave = clamp(u_bass * xover * floral, 0.0, 1.0);
+  float wAgudo = clamp(u_treble * (1.0 - xover) * floral, 0.0, 1.0);
+  vec3 somaAntes = min(col, vec3(1.0));
+  col = mix(col, vec3(0.95, 0.10, 0.75), wGrave);
+  col = mix(col, vec3(0.05, 0.85, 0.95), wAgudo);
+  col *= dot(somaAntes, vec3(1.0)) / max(dot(min(col, vec3(1.0)), vec3(1.0)), 0.001);
 
   // névoa de profundidade: sem depth buffer é assim que o lado de trás fica atrás.
   // É forte de propósito: os pontos de trás são os que se empilham sobre os de

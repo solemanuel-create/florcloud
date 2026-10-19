@@ -89,6 +89,11 @@
     beat2Ratio: 1.8,
     beat2Floor: 0.05,
     beat2Refractory: 0.10,
+    /* M1 — a refractária do instante dos médios. É o mesmo tempo do contratempo
+       porque é o mesmo género de evento (um ataque no topo do espectro, não um
+       bombo). Não tem `pulse3` ao lado de propósito: este canal não soma luz ao
+       frame, só carimba um relógio. */
+    beat3Refractory: 0.10,
     beat2Decay: 5.5,
 
     /* S2 — o caminho rápido, no domínio do tempo. Medido com um clique sintético
@@ -100,6 +105,13 @@
        propósito: um golpe não pode disparar duas vezes, porque a segunda dispararia a
        onda outra vez a meio do curso. */
     hitSplitHz: 250, // abaixo daqui é grave, acima é agudo
+    /* M1 — o segundo corte. Com um só, tudo o que não é grave caía no mesmo balde, e
+       os médios — a banda onde mora a melodia e a voz — ficaram sem instante: o
+       `shimmer`, o `sway` e o `roll` do shader corriam ao relógio e o som só lhes
+       pegava na amplitude. Um lowpass de um polo a 1200 Hz, na MESMA passagem, dá o
+       balde do meio por diferença entre os dois (`lpMid - lp`) e não tira nem põe nos
+       dois que já estavam medidos: o grave continua a ser `lp` e o agudo `v - lp`. */
+    hitSplit2Hz: 1200,
     /* O golpe tem de fazer UM TOPO NOVO. A primeira versão usava o mesmo par
        média/desvio dos detetores de espetro e falhou no teste sintético: uma nota
        corrida está sempre acima da sua própria média (que sobe a 3/s), e re-disparava
@@ -122,6 +134,13 @@
     // banda que os defenda, é o nível cru do microfone.
     hitFloorLo: 0.12,
     hitFloorHi: 0.10,
+    /* Piso do balde do meio, medido na armação sintética (3 s de ruído branco, o
+       topo do pico depois de o piso de ruído ter assentado): -32 dBFS dá 0,011,
+       -26 dBFS dá 0,020 e -20 dBFS dá 0,043. Um ataque a sério no balde — uma sílaba
+       a 700 Hz, uma caixa a 400 Hz — dá 0,24 a 0,26, quase seis vezes acima do chiado
+       mais alto testado. O balde do meio é o mais baixo dos três para o mesmo ruído
+       porque é o mais estreito (250-1200 Hz contra "tudo o que está acima"). */
+    hitFloorMid: 0.09,
     // o cintilar é para o que é BRILHANTE. Um passo no ar é banda larga por natureza
     // (o ataque de um bombo também), por isso cada golpe escolhe um canal, e não os
     // dois: o grave manda no flash quando o lado de baixo domina (>= basta, é um
@@ -129,6 +148,15 @@
     // ruidoso por construção e um prato tem de se distinguir de um passo. Sem isto, um
     // kick dava flash e tremelicava ao mesmo tempo, e um prato dava flash.
     hitBalance: 1.4,
+    /* M1 — o empata-desempate do médio contra o grave, e por que é 1,0 e não 1,4.
+       O corte é de um polo (6 dB por oitava), por isso os baldes solapam-se: medido
+       na armação sintética, um ataque a 400 Hz deixa 96% do seu pico no balde do
+       grave (topo lo 0,243 contra mid 0,254) e nunca chegaria ao 1,4 do contratempo.
+       Um valor mais alto que 1,0 só servia para varrer a banda inteira de 250-500 Hz
+       para fora do canal. O que importa — e é o que o 1,0 ainda garante — é que um
+       bombo não tem balde do meio: a 55 Hz os dois lowpass passam o mesmo sinal e a
+       diferença entre eles é quase zero (medido: lo 0,488 contra mid 0,155). */
+    hitBalanceMid: 1.0,
 
     // timbre: centro de massa do espectro em escala log, normalizado entre os dois
     // limites abaixo. É a única leitura que distingue uma flauta de uma guitarra ao
@@ -216,10 +244,14 @@
       // frame (é o que prende a fase da onda ao instante certo, no shader)
       this.hitLo = 0;
       this.hitHi = 0;
+      this.hitMid = 0;
       this.hitLoNoise = 0;
       this.hitHiNoise = 0;
+      this.hitMidNoise = 0;
+      this.beat3Hold = 0;
       this.hitFlag = false;
       this.hit2Flag = false;
+      this.hit3Flag = false;
       // 0,5 é o meio do curso: sem microfone o timbre não desloca nada e a flor
       // comporta-se exatamente como se este canal não existisse
       this.timbre = 0.5;
@@ -435,9 +467,10 @@
 
     update(dt) {
       let L = 0, B = 0, M = 0, T = 0;
-      let pkLo = 0, pkHi = 0;
+      let pkLo = 0, pkMid = 0, pkHi = 0;
       this.hitFlag = false;
       this.hit2Flag = false;
+      this.hit3Flag = false;
       if (this.audioOn && this.analyser) {
         const an = this.analyser;
         an.getByteFrequencyData(this.freq);
@@ -446,15 +479,22 @@
            lados do corte de um polo. O filtro é o mais barato que há e separa bumbo de
            prato à primeira ordem de grandeza, que é tudo o que se lhe pede. */
         const aSplit = 1 - Math.exp(-2 * Math.PI * TUNE.hitSplitHz / this.ctx.sampleRate);
-        let s = 0, lp = 0;
+        const aMid = 1 - Math.exp(-2 * Math.PI * TUNE.hitSplit2Hz / this.ctx.sampleRate);
+        let s = 0, lp = 0, lpMid = 0;
         for (let i = 0; i < this.wave.length; i++) {
           const v = (this.wave[i] - 128) / 128;
           s += v * v;
           lp += aSplit * (v - lp);
+          lpMid += aMid * (v - lpMid);
           const lo = lp < 0 ? -lp : lp;
+          // o balde do meio é a diferença entre os dois lowpass: os três somam o
+          // sinal de entrada, por isso nenhum deles é uma cópia do vizinho
+          const md = lpMid - lp;
+          const am = md < 0 ? -md : md;
           const hi = v - lp;
           const ah = hi < 0 ? -hi : hi;
           if (lo > pkLo) pkLo = lo;
+          if (am > pkMid) pkMid = am;
           if (ah > pkHi) pkHi = ah;
         }
         L = clamp(Math.sqrt(s / this.wave.length) * TUNE.levelGain, 0, 1);
@@ -470,13 +510,17 @@
       // último golpe ouvido
       const hold = Math.exp(-dt * TUNE.hitHoldFall);
       const refLo = this.hitLo * hold;
+      const refMid = this.hitMid * hold;
       const refHi = this.hitHi * hold;
       this.hitLo = Math.max(pkLo, refLo);
+      this.hitMid = Math.max(pkMid, refMid);
       this.hitHi = Math.max(pkHi, refHi);
       const crawl = TUNE.hitNoiseCrawl * dt;
       this.hitLoNoise = Math.min(pkLo, this.hitLoNoise + crawl);
+      this.hitMidNoise = Math.min(pkMid, this.hitMidNoise + crawl);
       this.hitHiNoise = Math.min(pkHi, this.hitHiNoise + crawl);
       const gateLo = Math.max(TUNE.hitFloorLo, this.hitLoNoise * TUNE.hitNoiseOver);
+      const gateMid = Math.max(TUNE.hitFloorMid, this.hitMidNoise * TUNE.hitNoiseOver);
       const gateHi = Math.max(TUNE.hitFloorHi, this.hitHiNoise * TUNE.hitNoiseOver);
       // release a 7 (tau ~140 ms): a 4 a nuvem de pontos não cintila com os agudos
       const ease = (cur, target) => cur + (target - cur) * (1 - Math.exp(-dt * (target > cur ? TUNE.attack : TUNE.release)));
@@ -533,6 +577,22 @@
       }
       this.pulse2 *= Math.exp(-dt * TUNE.beat2Decay);
 
+      /* M1 — o INSTANTE dos médios. Não é flash nem cintilar: não soma uma calorie ao
+         frame, só carimba `u_hit3T` no shader, que é o que passa o `shimmer`, o `sway`
+         e o `roll` de correrem ao relógio a começarem no ataque que se ouve. É o
+         remendo do S1 aplicado à banda que ele deixou de fora.
+             Não exige dominar os AGUDOS, ao contrário do contratempo: um ataque largo
+         (voz consoante, palma, caixa) é médio e agudo ao mesmo tempo, e os dois canais
+         dizem coisas diferentes — um é a flor que se mexe, o outro é a luz que
+         tremelica. O que exige é não perder do GRAVE (hitBalanceMid, e não o 1,4 do
+         contratempo: ver o comentário desse número) — sem ele, um bombo passava a pôr
+         a corola a balançar. */
+      this.beat3Hold = Math.max(0, this.beat3Hold - dt);
+      if (this.beat3Hold <= 0 && loudEnough && pkMid > gateMid && pkMid > pkLo * TUNE.hitBalanceMid && pkMid > refMid * TUNE.hitOver) {
+        this.beat3Hold = TUNE.beat3Refractory;
+        this.hit3Flag = true;
+      }
+
       this._recenter(dt);
       const k = 1 - Math.exp(-dt * TUNE.tiltEase);
       this.tilt.x += (this.tgt.x - this.tilt.x) * k;
@@ -585,6 +645,9 @@
         // a apanhar numa fase arbitrária da senoide do relógio corrido.
         hit: this.hitFlag,
         hit2: this.hit2Flag,
+        // M1 — o instante dos médios, no mesmo espírito: uma marca de tempo, não uma
+        // intensidade. É o que o shader usa para reiniciar a fase do balanço
+        hit3: this.hit3Flag,
         // 0,5 sem microfone: o timbre é a única leitura que existe mesmo quando o
         // áudio está desligado, e tem de dizer "neutro" e não "grave" ou "agudo"
         timbre: clamp(this.timbre, 0, 1),
