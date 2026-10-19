@@ -4,6 +4,109 @@ Formato seguido: uma entrada por mudança de visual ou de estrutura, com o `CACH
 correspondente do `service-worker.js` — é ele que diz ao browser para deitar fora a
 versão guardada.
 
+## 2026-10-19 — a mesa ganha volante: o `alpha` passa a ler-se (`v1su4rt-v25`)
+
+Lote G4, o último do diagnóstico do giroscópio e o único que acrescenta uma **capacidade nova**.
+Três ficheiros: o canal em [`assets/interaction.js`](assets/interaction.js), uma linha em
+`readFrame()` de [`assets/app.js`](assets/app.js), e o coeficiente `YAW_PULL` mais o observador
+`turn()` em [`assets/shaders.js`](assets/shaders.js). **Nenhum uniforme novo** — `scripts/check.mjs`
+continua a dar `fundo(8, 1)` e `nuvem(23, 7)` — e nenhuma cor tocada: a torção entra pela matriz,
+como o `spin` do áudio.
+
+**O defeito era literal.** No `v24` a palavra `alpha` não aparece **uma vez** no `interaction.js`
+(contagem: 0). Um tablet deitado na mesa dá `|tiltX| = |tiltY| = 0,00`: os dois canais que existiam
+estavam mortos exatamente no sítio onde um tablet vive. Restava o toque — que desde `v24` é só
+batida — e o arrasto.
+
+**O desenho.** Um **anexo** (`yawBase`) e o `alpha` mais próximo dele (`yawCur`, escolhido ao todo
+por 360°); o canal é a distância entre os dois. Entra só dentro de uma **porta de mesa** com
+histerese (polar ≤ 25° para entrar, ≥ 45° para sair), congela fora dela, e parte o referencial quando
+um salto é grande de mais (> 60°) em vez de o somar. O suavizado, a banda morta, a re-centragem e o
+teto são **os mesmos do tilt** — `tiltEase 9`, `orientDeadband 8`, `tiltKnee 0,75` — e a torção
+**soma-se** ao ângulo da rotação, nunca lhe substitui a velocidade: o áudio continua a ser quem faz
+rodar a flor.
+
+| cena (mesa, ψ a 60°/s durante 6 s) | `v24` | `v25` |
+|---|---|---|
+| torção de 30° | 0,000 · 0,00° | 0,872 · **33,95°** de flor |
+| torção de 60° | 0,000 · 0,00° | 1,937 · **40,02°** |
+| torção de 120° | 0,000 · 0,00° | 2,625 · **40,10°** (teto) |
+| tilt no mesmo gesto | 0,00° | 0,00° — não mexe, é outro eixo |
+
+- **O curso, medido** (ψ anda X° em 0,2 s, amostra 0,1 s depois, sensibilidade de fábrica 1,5):
+  5°→**6,21°**, 10°→**12,06°**, 20°→**24,66°**, 30°→**35,03°**, 40°→**38,61°** (96% do teto),
+  50°→**39,66°**, 60°→**39,98°**, 80°→**40,08°**, 120°→**40,09°**. Um grau de pulso vale um grau de
+  flor até aos 40; o joelho começa precisamente nos 20° (0,75 de canal).
+- **Histerese, nove sondas**: θ 30° vindo de 0° **entra** (40,10°), θ 30° vindo de 60° **não entra**
+  (0,00°), θ 44° vindo de 20° entra, θ 44° vindo de 60° não entra. `yawEnterDeg: -1` desliga o canal
+  inteiro (0,0000); `0` **não** desliga — deitado na mesa o polar é 0 e `0 <= 0` entra na mesma (40,10°).
+- **Levantar o tablet não desfaz a torção**: θ 5→88→5° com o pulso quieto injeta **0,00°** e o maior
+  passo de um frame é **0,000°**; o tilt faz o mesmo pico nas duas builds (17,19°). O gate da mesa é o
+  que come a singularidade da sequência z-x'-y'' junto ao vertical — e um `alpha` a saltar 180° nesse
+  intervalo também dá 0,00° / 0,000°.
+- **Quem persegue o neutro é a deriva, não o gesto**: rodar devagar (4,5°/s × 20 s) pico **14,23°**,
+  resíduo **12,03°**; torcer o pulso (90°/s × 1 s) pico **40,10°**, o mesmo resíduo aos 10 s. Os
+  12,03° são a banda morta do G1 no canal novo (8° de 40 × 1,5 × 40,1°), não um valor arbitrário.
+- **Segurar 60°** assenta aos **6,4 s** e fica nos mesmos 12,03° — é o preço do G1, medido no canal novo.
+- **Virar o ecrã a meio do gesto** (0→90° no meio de uma torção): a torção **não se mexe**
+  (18,83° → 21,93°, passo máximo 1,595°) enquanto o tilt **re-arma** (florY 4,32° → 4,02° → 0,27° →
+  0,00°). A torção não lê a tela, lê o mundo — é o `G5a` do outro canal.
+- **Android, os dois eventos sobre o mesmo sensor**: 40° torcidos com `deviceorientation` **e**
+  `deviceorientationabsolute` no mesmo ciclo dão exatamente o mesmo que com um só (canal 1,2252 ·
+  38,61°) — o latch de fonte conta uma vez. A troca a meio (rel→abs) não larga o anexo: maior passo
+  de um frame **2,720°**.
+- **Sem giroscópio, nada muda**: 10 s sem um único evento dão |torção| **0,0000**, porque o ponteiro
+  não tem caminho para este canal; e o vigia de silêncio repõe a torção no centro (passo máximo
+  **2,374°** no re-arme).
+- **Regressão do tilt: `0,000000000°`** nos dois eixos, em 26,5 s de pose, contra o `v24`.
+
+**Porquê o anexo e não somar diferenças.** O desenho óbvio é um odómetro, e o que sobra de um
+odómetro é a memória. Medido (teste 10b): 300° na mesa e desfazê-los todos — o anexo acompanha o
+regresso e fica no resíduo de sempre (13,15°); o acumulador passa a ida, a espera **e metade do
+regresso colado no teto aos 40,10°**, porque os 300° que somou têm de ser percorridos outra vez. Ao
+contrário do que eu supunha, **o ruído não separa os dois desenhos**: com ±2° ao acaso em cada um dos
+3600 eventos, os dois dão o mesmo pico (1,72°), porque as diferenças se telescópiam em
+(último − primeiro). É o histórico que sobra, não o ruído que se integra.
+
+**Dois defeitos apanhados pela verificação, ambos com teste agora.**
+1. **Um `alpha` `NaN` matava o tilt.** O teste era ao nulo (`== null`), e um `NaN` passava por
+   existente: entrava no `Math.max` do detetor de pose quieta, que é **partilhado** pelos dois
+   canais, devolvia `NaN`, e o contador de quietude nunca chegava ao limiar. Medido: o tilt ficava
+   aos **15,46°** em vez dos **5,16°** aos 25 s — a adoção da pose morria no canal que não tinha
+   nada a ver com a bússola. Hoje o teste é `Number.isFinite`, nos três ângulos e no `_angle()` (que
+   também deixava passar um `NaN`).
+2. **Um evento absoluto sem bússola calava o ramo relativo para sempre.** Visto **num browser
+   real**: um único `deviceorientationabsolute` com `alpha` nulo punha `_yawSrc = 'abs'`, o
+   `deviceorientation` comum passava a ser ignorado, e 30° de torção valiam **0° de flor** até o
+   anexo ser largado à mão. O `_onOrientAbs` só reivindica a fonte quando traz um ângulo; e o
+   `_loseOrient()` passa a largar a reivindicação, para que um Android que deixe de emitir o
+   absoluto volte a torcer pelo evento comum. Teste 9b: com o guarda **39,43°**, sem ele **0,00°**.
+
+**Medição** — o harness `_yaw.mjs` corre **três builds**: o `interaction.js` do `v24` (snapshot), o
+da árvore de trabalho, e o mesmo da árvore com o `_onYaw` trocado pelo acumulador, que é como a
+rejeição do odómetro ficou medida em vez de argumentada. As regressões correm verdes sobre a mexida:
+`check.mjs`, `_g5.mjs` **19/19**, `_m1.mjs` **11/11**, `_s2.mjs` **12/12**, `_knee.mjs`, `_g12.mjs`.
+Depois, **as duas árvores servidas lado a lado num browser real** com `DeviceOrientationEvent`
+verdadeiros: 45° de torção na mesa deram pico **39,74°** de flor lido do shader (`turn().off`), o
+duplo rel+abs contou **uma** vez (o anexo foi a 75° = 45+30, não 45+60), o tilt continuou a ir ao
+teto (`ty = 1,0`), e uma pausa de 6 s sem eventos largou a pose e re-armou do centro. Atenção que o
+service worker serve a cache antiga: sem desregistar e `caches.delete()`, o que se está a medir é a
+build anterior — aconteceu nesta verificação.
+
+**O preço honesto.** O ângulo desenrolado vive em ±180° do anexo: a 440°/s, torções de 100° e 175°
+não trocam de sinal, mas **240° troca** (o volante passa a rodar para o lado contrário). Não se vê o
+coice porque a saída satura aos ~70° muito antes. E `yawJumpDeg: 60` é **estimado, não medido** — é o
+número que separa "mão a torcer" de "bússola a recalibrar", e sem um celular na mão não há como saber
+onde a fronteira está.
+
+**O que não foi verificado:** nada em hardware real — o ruído de bússola é sintético (±0,5° e ±2° ao
+acaso), o `deviceorientationabsolute` do Android com magnetómetro verdadeiro nunca chegou a existir
+neste ambiente (o que se viu foi o do portátil, sem ângulo), o iOS nem dispara esse evento e aqui foi
+exercitado pelo ramo `rel`, e o `deviceorientation` do próprio Chrome de desktop foi fingido por
+código. Fica por sentir no celular: se a flor gira com o pulso **sem dar a sensação de volante ao
+contrário**, se os 25° da porta são apertados de mais para uma mesa inclinada, e se a recalibração do
+Android (o salto súbito do `alpha`) não comesse torção a meio de um gesto.
+
 ## 2026-10-19 — um toque é uma batida, nunca uma inclinação (`v1su4rt-v24`)
 
 Lote G5b, o terceiro do diagnóstico do giroscópio e o último que não precisa de hardware novo.

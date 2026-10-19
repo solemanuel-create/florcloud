@@ -1,7 +1,8 @@
 /* v1su4rt — sensores: microfone (AudioContext + AnalyserNode) e giroscópio
-   (deviceorientation). Nada é gravado nem enviado: os valores só alimentam o shader.
-   Saem sete canais por frame: nível, grave, médio, agudo, batida (ataque dos graves),
-   contratempo (ataque dos agudos) e timbre (que som é, não quanto som há). */
+   (deviceorientation, e deviceorientationabsolute para a torção de G4). Nada é
+   gravado nem enviado: os valores só alimentam o shader.
+   Saem sete canais por frame: nível, grave, médio, agudo, batida (ataque dos
+   graves), contratempo (ataque dos agudos) e timbre (que som é, não quanto som há). */
 (function () {
   'use strict';
 
@@ -11,8 +12,9 @@
      como a flor escuta. As bandas dizem o que cada uniforme recebe, o ataque e o
      release dizem quão depressa se move, a batida diz quando entra o flash (grave) e
      o contratempo diz quando entra o cintilar (agudos), o timbre diz que cor o
-     som tem, e a re-centragem diz quanto tempo uma pose do aparelho deixa de ser
-     novidade. Tudo em 0..1 salvo indicação em contrário. */
+     som tem, a re-centragem diz quanto tempo uma pose do aparelho deixa de ser
+     novidade, e a torção diz o que um aparelho deitado na mesa pode fazer. Tudo em
+     0..1 salvo indicação em contrário. */
   const TUNE = {
     // analisador: 1024 dá 512 bins; a 48 kHz cada bin vale ~47 Hz
     fftSize: 1024,
@@ -203,6 +205,8 @@
     // um beta que salta para 180° quando o aparelho passa acima do teto). 70° fica
     // muito acima de qualquer pose de uso e não corta nada do que se vê.
     tiltMaxDeg: 70,
+    // G4 — a torção usa o mesmo ease do tilt: é o mesmo género de canal (um gesto
+    // segurado, não um ataque) e um número a menos para justificar.
     tiltEase: 9,
     // G5a — quantos segundos sem UM SOZINHO evento `deviceorientation` antes de dar
     // o sensor por perdido. É generoso de propósito: um Android que agrupa leituras
@@ -212,6 +216,32 @@
     // por isso o único risco de esperar demasiado é a flor ficar pendurada na última
     // pose um pouco mais.
     orientStall: 6,
+
+    /* G4 — a mesa. Um aparelho deitado não inclina: beta e gamma são ambos ~0 e o
+       único ângulo que roda com o pulso é alpha, que aqui não era lido em parte
+       nenhuma. Passa a haver um terceiro canal de gesto — a torção no plano do
+       ecrã, o gesto mais óbvio que existe com a máquina deitada — e é o mais frágil
+       dos três, porque alpha vem da bússola.
+           yawEnterDeg / yawExitDeg são a histerese da mesa: a torção só é aceite com
+       o ecrã apontado para cima e desliga-se ao passar do ângulo de saída, porque
+       perto do vertical alpha entra na singularidade da sequência z-x'-y'' e salta
+       180° com uma mudança pequena de pose. O interruptor de volta é pôr
+       yawEnterDeg a -1: nenhum ângulo passa, e o canal fica mudo como estava. Não
+       serve 0, que é a primeira coisa que se tenta — deitado na mesa o ângulo polar
+       é 0 e 0 <= 0 entra na mesma.
+           yawRange é o curso em graus de torção, e é o mesmo tiltRange de propósito:
+       assim a banda morta partilhada (orientDeadband, 8°) fica a mesma fração dos
+       dois cursos, que é a regra que o G2 deixou.
+           yawJumpDeg é a guarda da bússola. Um só evento a mudar mais do que isto não
+       é a mão — é o magnetómetro a recalibrar-se ou a passar por um íman — e move o
+       anexo junto consigo, para a flor não se mexer. Estime, não medida: um giro de
+       pulso rápido anda pelos 700-900°/s, que a 60 Hz são 12-15° por evento; uma
+       recalibração salta dezenas a centenas de graus de uma vez. 60° fica dos dois
+       lados com folga. */
+    yawEnterDeg: 25,
+    yawExitDeg: 45,
+    yawRange: 40,
+    yawJumpDeg: 60,
 
     // ombro suave: linear até aqui, exponencial depois. É a forma do read() do
     // áudio e, desde G3, também a do canal do tilt — lá em shaders.js, com o mesmo
@@ -242,6 +272,7 @@
       // anterior quando o usuário desliga e volta a ligar o microfone
       this._clearSession();
       this._onOrient = this._onOrient.bind(this);
+      this._onOrientAbs = this._onOrientAbs.bind(this);
 
       document.addEventListener('visibilitychange', () => {
         if (!document.hidden && this.ctx && this.ctx.state === 'suspended') this.ctx.resume();
@@ -271,6 +302,21 @@
       this._onGyro = null;
       // G1 — a memória da pose quieta (referência lenta, desvio, tempo parado)
       this._pose = null;
+      // G4 — a memória da torção. `yawCur` é o alpha da bússola desenrolado à volta
+      // de `yawBase`, nunca a soma dos seus passos: é o que faz o ruído de alguns
+      // graus do magnetómetro ficar onde está em vez de se acumular e levar a flor a
+      // deriva. `yawBase` é o neutro que persegue essa distância, com a mesma máquina
+      // de dois regimes do tilt.
+      this.yawCur = 0;
+      this.yawBase = 0;
+      this.yawTgt = 0;
+      this.yaw = 0;
+      this._yawPrev = null;
+      // de que evento vem o alpha: 'abs' (deviceorientationabsolute) ou 'rel'. Os
+      // dois disparam no Android sobre o mesmo sensor e somar-lhes os dois era pôr a
+      // flor a rodar ao dobro.
+      this._yawSrc = null;
+      this._yawFlat = false;
       this.base = null;
       this.baseAng = null;
       this.cur = { x: 0, y: 0 };
@@ -328,6 +374,12 @@
         this.orientLive = true;
         this._orientSilent = 0;
         window.addEventListener('deviceorientation', this._onOrient);
+        // G4 — no Android é o evento absoluto que dá um alpha estável (relativo ao
+        // norte magnético); o comum dá um alpha relativo a uma direção arbitrária,
+        // que serve para um volante mas não para o que o `_yawSrc` escolhe. iOS não
+        // dispara este segundo e continua a alimentar a torção pelo `alpha` do evento
+        // comum, que é o ramo `rel` de _onYaw.
+        window.addEventListener('deviceorientationabsolute', this._onOrientAbs);
         // computadores disparam o evento sem valores: se nada útil chegar, avisa
         // NESTE INSTANTE — mas o listener fica onde está, porque a janela de
         // permissão do Android pode aparecer tarde e ser respondida depois deste
@@ -352,12 +404,24 @@
       this.base = null;
       this.tgt.x = 0;
       this.tgt.y = 0;
+      // G4 — com o anexo colado ao ângulo onde o sensor ficou calado, o canal morre
+      // centrado: um sensor que volta a falar re-sincroniza no neutro em vez de
+      // herdar o ângulo da sala de onde se caiu.
+      this.yawBase = this.yawCur;
+      this.yawTgt = 0;
+      this._yawPrev = null;
+      this._yawFlat = false;
+      // e larga também a reivindicação da fonte: se o `deviceorientationabsolute` do
+      // Android cair e só voltar o evento comum, o ramo `rel` tem de poder assumir a
+      // torção no re-arme — com o latch antigo ficava calado para sempre
+      this._yawSrc = null;
       if (this._onGyro) this._onGyro('unavailable');
     }
 
     stop() {
       clearTimeout(this._gyroTimer);
       window.removeEventListener('deviceorientation', this._onOrient);
+      window.removeEventListener('deviceorientationabsolute', this._onOrientAbs);
       if (this.stream) this.stream.getTracks().forEach((t) => t.stop());
       if (this.ctx) { try { this.ctx.close(); } catch (e) { /* ignora */ } }
       this._clearSession();
@@ -412,13 +476,19 @@
 
     _angle() {
       let a = 0;
-      if (window.screen.orientation && typeof window.screen.orientation.angle === 'number') a = window.screen.orientation.angle;
-      else if (typeof window.orientation === 'number') a = window.orientation;
+      if (window.screen.orientation && Number.isFinite(window.screen.orientation.angle)) a = window.screen.orientation.angle;
+      else if (Number.isFinite(window.orientation)) a = window.orientation;
       return ((a % 360) + 360) % 360;
     }
 
+    /* G4 — o teste é ao número, não ao nulo. Um beta ou um alpha `NaN` passa por
+       existente e envenena tudo: o `Math.max` do detetor de pose quieta devolve NaN,
+       NaN < orientStillDeg é falso, o contador de quietude nunca chega ao limiar e a
+       re-centragem morre — não só no canal que entrou, mas nos dois que partilham o
+       detetor. Os navegadores mandam alpha nulo quando não há bússola e mandam-no NaN
+       quando a pose não é resolvível, por isso é aqui que isso se fecha. */
     _onOrient(e) {
-      if (e.gamma == null || e.beta == null) return;
+      if (!Number.isFinite(e.gamma) || !Number.isFinite(e.beta)) return;
       this.orientSeen = true;
       this._orientSilent = 0;
       // G5a — o sensor volta sozinho: foi dado por perdido pelo vigia de 1,5 s (a
@@ -448,6 +518,84 @@
       // e o evento chega a 60 Hz enquanto o renderizador corre a 30 num celular fraco
       this.cur.x = ax;
       this.cur.y = ay;
+      if (this._yawSrc !== 'abs') this._onYaw(e);
+    }
+
+    /* G4 — o handler do deviceorientationabsolute. Só alimenta a torção: o tilt já
+       veio no evento comum, com os mesmos beta/gamma, e relê-lo não mudava nada mas
+       contava duas vezes o mesmo alpha. Não é preciso re-sincronizar nada na troca de
+       referencial: o anexo de _onYaw absorve o salto, e o que havia de torção fica.
+           O `isFinite` não é limpeza, é a reivindicação: quem não traz ângulo não se
+       pode apropriar da fonte. Medido no browser — um único evento absoluto do portátil,
+       com alpha nulo, bastou para pôr `_yawSrc` em 'abs' e calar o ramo `rel` para
+       sempre: 30° de torção valiam 0° de flor, e só voltaram a valer quando o anexo foi
+       largado à mão. O `_onOrient` do evento comum decide por esta variável. */
+    _onOrientAbs(e) {
+      if (!Number.isFinite(e.alpha)) return;
+      this._yawSrc = 'abs';
+      this._onYaw(e);
+    }
+
+    /* G4 — a torção. O alpha é uma bússola, e uma bússola não é um contador: recalibra
+       de uma vez quando o ferro do bolso ou o cabo do carregador lhe mexem no
+       referencial. O desenho óbvio — somar as diferenças evento a evento — faz dele um
+       odómetro, e o que sobra de um odómetro é a memória de por onde a mão passou.
+       Medido em _yaw.mjs (teste 10b): rodar 300° na mesa e desfazê-los todos. O anexo
+       acompanha o regresso e fica no resíduo de sempre (13,2°); o acumulador passa a
+       ida, a espera e metade do regresso colado no teto aos 40,1°, porque os 300° que
+       ele somou não se desfazem com o pulso — têm de ser percorridos outra vez, e a
+       flor fica sem resposta enquanto a mão já está a fazer o gesto contrário. O ruído,
+       ao contrário do que eu supunha, NÃO separa os dois desenhos: com ±2° ao acaso em
+       cada leitura, os dois dão o mesmo pico (1,72°), porque as diferenças se
+       telescópiam em (último − primeiro) e o acaso não acumula. É o histórico que
+       sobra, não o ruído que se integra — e é por isso que aqui não se soma nada.
+           Guarda-se um ANEXO (yawBase) e o alpha mais próximo dele (yawCur), escolhido
+       ao todo por 360°. O canal é a distância entre os dois: um salto de recalibração
+       move o anexo junto, e um 359°→0° é só o `Math.round` a trocar de volta. O
+       preço, e é preço: o ângulo desenrolado vive em ±180° do anexo, por isso rodar
+       mais de meia volta em cima da mesa faz o sinal trocar de lado — medido a 440°/s,
+       100° e 175° de torção contínua não trocam, 240° troca. Não se vê o coice porque
+       a saída já satura aos 70° muito antes; e o anexo migra com a re-centragem, por
+       isso pousar o tablet outra vez repõe o centro.
+           O gate da mesa é o que falta ao alpha para ser usável: com o aparelho quase
+       na vertical, a sequência z-x'-y'' do deviceorientation entra em singularidade e
+       um centímetro de pulso vale 180° de ângulo.
+           Fora da mesa o valor fica congelado onde estava, não volta a zero: levantar
+       o tablet depois de o ter rodado não faz a flor dar um coice, e pousá-lo outra
+       vez continua a aceitar torção de onde parou. */
+    _onYaw(e) {
+      if (!Number.isFinite(e.alpha) || !Number.isFinite(e.beta) || !Number.isFinite(e.gamma)) return;
+      const r = Math.PI / 180;
+      /* O ângulo polar do ecrã face ao teto. Na sequência z-x'-y'' a componente
+         vertical da normal do aparelho é cos(beta)·cos(gamma), e é um invariante da
+         pose — não precisa do rebatimento pelo ângulo da tela que o tilt precisa,
+         porque não é um eixo da tela, é a inclinação da mesa. */
+      const pol = Math.acos(clamp(Math.cos(e.beta * r) * Math.cos(e.gamma * r), -1, 1)) / r;
+      const wasFlat = this._yawFlat;
+      this._yawFlat = pol <= (this._yawFlat ? TUNE.yawExitDeg : TUNE.yawEnterDeg);
+      const a = e.alpha;
+      const prev = this._yawPrev;
+      this._yawPrev = a;
+      // a primeira leitura não é um movimento: é onde a torção de agora passa a contar.
+      // O mesmo se aplica ao instante em que a porta da mesa se reabre: o alpha que se
+      // viu com o aparelho quase na vertical veio da singularidade da sequência, e
+      // desenrolá-lo contra um anexo antigo faria a flor saltar meia volta no momento
+      // em que se pousa o tablet — re-sincroniza-se o anexo e o canal fica no centro.
+      if (prev === null || (this._yawFlat && !wasFlat)) {
+        this.yawCur = a;
+        this.yawBase = a;
+        return;
+      }
+      if (!this._yawFlat) return;
+      const d = ((a - prev + 540) % 360) - 180;
+      // um salto maior que a porta não é a mão a torcer: é o referencial que mudou de
+      // lugar, e leva o anexo com ele para o canal ficar onde estava
+      if (d > TUNE.yawJumpDeg || d < -TUNE.yawJumpDeg) {
+        this.yawBase += d;
+        this.yawCur += d;
+        return;
+      }
+      this.yawCur = a + 360 * Math.round((this.yawBase - a) / 360);
     }
 
     /* Tabelas do espectro, uma vez por microfone aberto. O centroid precisa do log
@@ -682,6 +830,8 @@
       const k = 1 - Math.exp(-dt * TUNE.tiltEase);
       this.tilt.x += (this.tgt.x - this.tilt.x) * k;
       this.tilt.y += (this.tgt.y - this.tilt.y) * k;
+      // G4 — a torção suaviza-se com o mesmo τ: é o mesmo género de canal
+      this.yaw += (this.yawTgt - this.yaw) * k;
     }
 
     /* Re-centragem: a pose em que o aparelho está passa a ser o neutro, por isso
@@ -695,6 +845,7 @@
       if (!this.base) {
         this.tgt.x = 0;
         this.tgt.y = 0;
+        this.yawTgt = 0;
         return;
       }
       const dx = this.cur.x - this.base.x;
@@ -709,11 +860,15 @@
          tremular mais de orientStillDeg nunca se adota, e fica-se pelo regime lento
          de sempre. */
       const kp = 1 - Math.exp(-dt * TUNE.orientPoseHz);
-      if (!this._pose) this._pose = { x: this.cur.x, y: this.cur.y, dev: 0, still: 0 };
-      const dev = Math.max(Math.abs(this.cur.x - this._pose.x), Math.abs(this.cur.y - this._pose.y));
+      if (!this._pose) this._pose = { x: this.cur.x, y: this.cur.y, yaw: this.yawCur, dev: 0, still: 0 };
+      // G4 — a torção conta para a quietude da mesma forma que os dois eixos do tilt:
+      // é um gesto segurado, e uma mão parada com a bússola a andar é a última coisa
+      // que se quer adotar como neutro
+      const dev = Math.max(Math.abs(this.cur.x - this._pose.x), Math.abs(this.cur.y - this._pose.y), Math.abs(this.yawCur - this._pose.yaw));
       this._pose.dev += (dev - this._pose.dev) * kp;
       this._pose.x += (this.cur.x - this._pose.x) * kp;
       this._pose.y += (this.cur.y - this._pose.y) * kp;
+      this._pose.yaw += (this.yawCur - this._pose.yaw) * kp;
       this._pose.still = this._pose.dev < TUNE.orientStillDeg ? this._pose.still + dt : 0;
       const quieta = this._pose.still > TUNE.orientAdopt;
       if (this.orientOn && TUNE.orientRecenter > 0) {
@@ -728,6 +883,18 @@
            de flor no lado de cima. */
         const dbY = (TUNE.orientDeadband * (dy > 0 ? TUNE.tiltRangeUp : TUNE.tiltRange)) / TUNE.tiltRange;
         if (Math.abs(dy) > dbY) this.base.y += (dy - Math.sign(dy) * dbY) * k;
+        /* G4 — o mesmo k, o mesmo deadband e a mesma adoção da pose quieta servem a
+           torção, com o neutro a persegui-la em vez de a base do tilt. É isto que
+           defende o canal da bússola: sem re-centragem, dar uma volta na sala com o
+           telemóvel na mão deixava a flor virada para o ângulo por onde se passou,
+           para sempre. Só corre dentro da banda da mesa: fora dela o alvo fica onde
+           estava, que é o "levantar o tablet não desfaz a torção" de _onYaw. */
+        if (this._yawFlat) {
+          const dyaw = this.yawCur - this.yawBase;
+          if (Math.abs(dyaw) > TUNE.orientDeadband) {
+            this.yawBase += (dyaw - Math.sign(dyaw) * TUNE.orientDeadband) * k;
+          }
+        }
       }
       /* G3 — o desvio já não é cortado aqui. Este clamp aos ±1 era o TETO VERDADEIRO
          de todo o canal: acima de tiltRange graus de aparelho nada se mexia em parte
@@ -740,6 +907,18 @@
       this.tgt.x = clamp(dx, -TUNE.tiltMaxDeg, TUNE.tiltMaxDeg) / TUNE.tiltRange;
       // G2 — só o y tem dois cursos: para cima é o que o pulso deixa (tiltRangeUp)
       this.tgt.y = clamp(dy, -TUNE.tiltMaxDeg, TUNE.tiltMaxDeg) / (dy > 0 ? TUNE.tiltRangeUp : TUNE.tiltRange);
+      /* G4 — o alvo da torção é o desvio em relação ao seu neutro, sobre o mesmo curso
+         de 40° do x do tilt, e com o mesmo guarda-de-sensor-avariado (tiltMaxDeg,
+         partilhado de propósito: um canal de gesto em que alguém pôs o aparelho a
+         rodar como uma hélice não pode pedir mais limites do que os 70° que se pedem
+         a uma inclinação). O teto verdadeiro continua a ser o ombro do funil, em
+         shaders.js, e é o MESMO funil — a torção é um canal de gesto como o tilt, e um
+         topo colado aqui também lhe matava o curso.
+             Só se atualiza dentro da banda da mesa: fora dela fica no último valor,
+         que é o "levantar o tablet não desfaz a torção" de _onYaw. */
+      if (this._yawFlat) {
+        this.yawTgt = clamp(this.yawCur - this.yawBase, -TUNE.tiltMaxDeg, TUNE.tiltMaxDeg) / TUNE.yawRange;
+      }
     }
 
     /* Valores prontos para o shader, já com a sensibilidade aplicada.
@@ -750,7 +929,8 @@
            O tilt é o único que sai daqui sem limite: tem dois caminhos até ao
        shader — o giroscópio passa por read(), o rato e o toque (app.js) não passam
        — e um teto posto aqui só valeria para um dos dois. O teto partilhado vive no
-       funil onde os dois se encontram (tiltKnee, em shaders.js). */
+       funil onde os dois se encontram (tiltKnee, em shaders.js). Desde G4 a torção
+       sai com a mesma regra, mas ela só tem um caminho: nunca chega pelo ponteiro. */
     read() {
       const g = this.audioSens;
       const c = (v) => softKnee(v * g, TUNE.knee);
@@ -776,6 +956,11 @@
         timbre: clamp(this.timbre, 0, 1),
         tiltX: this.tilt.x * this.orientSens,
         tiltY: this.tilt.y * this.orientSens,
+        /* G4 — a torção sai da mesma forma e sem limite, pelo mesmo motivo do tilt:
+           encontra-o no funil de shaders.js, que é onde os canais de gesto partilham
+           o teto. Vale 0 enquanto o aparelho não estiver na mesa (e 0 sempre, sem
+           giroscópio: o ponteiro não tem alpha, e um rato no ar não roda nada). */
+        yaw: this.yaw * this.orientSens,
       };
     }
   }

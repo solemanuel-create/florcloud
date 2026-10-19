@@ -300,7 +300,13 @@
       hit2: s.hit2,
       hit3: s.hit3,
       timbre: s.timbre,
-      tilt: [tiltX, tiltY]
+      tilt: [tiltX, tiltY],
+      /* G4 — a torção não tem caminho de ponteiro, ao contrário do tilt: rodar o
+         telemóvel sobre o próprio eixo é uma coisa que um rato no ar não sabe fazer.
+         Por isso passa direto, e vale 0 sempre que o giroscópio não está vivo —
+         _loseOrient() põe o neutro da torção no acumulador, e o canal volta ao centro
+         com o mesmo τ do tilt em vez de ficar pendurado no último rumo da bússola. */
+      yaw: s.yaw
     };
   }
 

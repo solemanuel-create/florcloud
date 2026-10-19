@@ -569,7 +569,7 @@
   let buildMs = 0; // milissegundos de tela em branco gastos a construir a nuvem
   let headPoints = 0; // B4: quantos pontos moram na cabeça e foram reindexados no disco
 
-  const state = { audio: 0, bass: 0, mid: 0, treble: 0, pulse: 0, pulse2: 0, timbre: 0.5, tiltX: 0, tiltY: 0, cloud: 1, mixCor: 0, mixForm: 0, hitT: 0, hit2T: 0, hit3T: 0, hitPend: false, hit2Pend: false, hit3Pend: false };
+  const state = { audio: 0, bass: 0, mid: 0, treble: 0, pulse: 0, pulse2: 0, timbre: 0.5, tiltX: 0, tiltY: 0, yaw: 0, cloud: 1, mixCor: 0, mixForm: 0, hitT: 0, hit2T: 0, hit3T: 0, hitPend: false, hit2Pend: false, hit3Pend: false };
 
   // escala do flash e do contratempo, separada do timeScale: prefers-reduced-motion
   // pode abrandar o movimento sem deixar um estroboscópio de tela cheia a 1,0
@@ -841,6 +841,17 @@
     gl.vertexAttribPointer(p.attrib.a_band, 1, gl.FLOAT, false, 0, 0);
   }
 
+  /* G4 — quanto vale a torção do pulso, em radianos por unidade de canal. O canal
+     chega limitado a ±1 pelo mesmo joelho do tilt (partilham o teto porque são os dois
+     canais de gesto, e um com o topo colado deixa de ser um curso — a regra do G3), e
+     o topo assintótico é 0,70 rad = 40,1° de flor: o gesto é o mais literal que existe
+     com um aparelho deitado na mesa e o único que ele tem. Medido em _yaw.mjs com a
+     tabela toda, à sensibilidade de fábrica (1,5): 5° de pulso dão 6,2° de flor, 10°
+     dão 12,1°, 20° dão 24,7° (o joelho dos 0,75 de canal começa precisamente aqui),
+     40° dão 38,6° — 96% do teto — e 60° dão 40,0°. Ou seja, um grau de pulso vale um
+     grau de flor até aos 40 e depois passa o resto do curso a encostar-se ao teto. */
+  const YAW_PULL = 0.70;
+
   // A flor inteira é este draw call: uma nuvem de pontos sobre as superfícies
   // paramétricas, aditiva e sem escrever profundidade.
   function drawFlower(dt) {
@@ -871,7 +882,11 @@
     // por isso o giroscópio e o mouse também inclinam a flor, não só o fundo
     const s = 0.82 * (0.98 + state.audio * 0.04 + state.pulse * 0.02);
     mat4Scale(model, s, s, s);
-    mat4RotateY(rot, spin); mulLeft(model, rot);
+    // G4 — a torção do pulso SOMA-SE ao ângulo da rotação, não lhe substitui a
+    // velocidade: o volante muda a cara que a flor apresenta, e o áudio continua a
+    // ser quem a faz rodar. É o que evita que os dois briguem pelo mesmo eixo — um
+    // nunca tem de ganhar ao outro, porque um é um deslocamento e o outro é um ritmo.
+    mat4RotateY(rot, spin + state.yaw * YAW_PULL); mulLeft(model, rot);
     mat4RotateZ(rot, tx * 0.30 + wob * Math.cos(prec)); mulLeft(model, rot);
     // os graves fazem a flor inclinar-se para a frente
     mat4RotateX(rot, 1.02 + ty * 0.30 - state.bass * 0.10 + wob * Math.sin(prec)); mulLeft(model, rot);
@@ -1089,6 +1104,10 @@
       state.tiltX = tiltKnee(obj.tilt[0]);
       state.tiltY = tiltKnee(obj.tilt[1]);
     }
+    /* G4 — a torção passa pelo MESMO funil do tilt, porque é o mesmo defeito que o G3
+       apanhou: um canal de gesto com um corte próprio congela antes do fim do gesto.
+       `tiltKnee` tolera o undefined (deixa 0), que é o caso de um driver sem sensor. */
+    state.yaw = tiltKnee(obj.yaw);
   }
 
   /* readFrame(dt) devolve o estado dos sensores de cada frame. */
@@ -1124,6 +1143,20 @@
     // diagnóstico: o tilt já passado pelo joelho do funil — é o número que o shader
     // vê, e por isso o único que prova o que um toque faz (ou não) no canal
     tilt: function () { return { x: state.tiltX, y: state.tiltY }; },
+    /* G4 — diagnóstico da torção, com os números que provam o gesto: `yaw` é o canal
+       já passado pelo joelho, `off` são os graus de flor que essa torção deslocou
+       (é o ângulo que a mão deu, do outro lado do coeficiente), e `total` é o ângulo
+       Y completo que o modelo levou neste frame — rotação do áudio mais torção, em
+       graus e sem enrolar, para se poder comparar dois frames por diferença. */
+    turn: function () {
+      const g = 180 / Math.PI;
+      return {
+        yaw: state.yaw,
+        off: state.yaw * YAW_PULL * g,
+        spin: spin * g,
+        total: (spin + state.yaw * YAW_PULL) * g,
+      };
+    },
     // diagnóstico: quantos dos 46.892 pontos foram reindexados no disco de sementes
     seedHeadPoints: function () { return headPoints; },
     // diagnóstico da sincronia: quanto tempo de animação passou desde cada golpe.
