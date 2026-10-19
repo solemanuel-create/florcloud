@@ -4,6 +4,43 @@ Formato seguido: uma entrada por mudança de visual ou de estrutura, com o `CACH
 correspondente do `service-worker.js` — é ele que diz ao browser para deitar fora a
 versão guardada.
 
+## 2026-10-19 — uma régua para o atraso, e as bandas a chegar uma frame mais cedo (`v1su4rt-v20`)
+
+Lote O5 + O1, escolhido depois de um diagnóstico pedido porque a sincronia ainda não estava boa
+com o microfone aberto. Nada aqui mexe na cor nem na forma: mexe no *tempo* que a intensidade leva
+a chegar.
+
+- **O5 — `v1su4rtProbe.run()`**: injeta um degrau conhecido no mesmo `AnalyserNode` (senoide a
+  60 Hz, amplitude 0,22, espetro plano para que as três bandas degrauem no mesmo instante) e
+  devolve, por canal, os ms desde o instante em que o degrau **foi emitido** até cruzar 50% e 90%
+  do valor em que assenta, mais o ms a que o `hit` sai e a que o carimbo do shader o apanha, e o
+  pico-a-pico do degrau segurado (a tremura). A régua controla as suas condições: fixa a
+  sensibilidade em 1 durante a medição — com o slider no 3 todos os canais encostam no teto e
+  mede-se o joelho suave em vez do envelope — e devolve as memórias das bandas ao estado de
+  arranque no fim.
+- **O baseline, com `attack: 28`**: 50% aos **28 ms**, 90% aos **69 ms** nas bandas, contra um
+  instante de golpe a chegar aos **7,5 ms**. Quatro frames de atraso entre o flash e a cor.
+- **O1 — `attack: 28 → 90`, `release: 7 → 9`**: 50% passa a **7,3 ms** e 90% a **21 ms** — uma
+  frame em vez de quatro. O release sobe só para o ataque novo não deixar a flor a
+  estroboscopicar entre golpes.
+- **Tremura medida com 90**: **0** de pico-a-pico nas três bandas e **0,065–0,078** no nível, em
+  duas passagens. É o limite de *baixo*: um tom sintético segurado é a entrada mais mansa que
+  existe, portanto não é garantia para música real.
+- **O que a régua descobriu e não se previa**: o `level` (RMS) é consistentemente o dobro do tempo
+  das bandas (50% aos 14 ms, 90% aos 28) porque a própria janela do analyser ainda tem silêncio
+  dentro quando o degrau começa — não é o ease. E, com o atraso das bandas reduzido a uma frame,
+  **o teto passou a ser a cadência do ecrã**: 6,9 ms a 145 Hz, 33 ms num celular a 30 Hz. É por
+  isto que a próxima aquisição não é mais envelope, é o instante por banda (O2).
+- **Luz**: com o microfone fechado os quatro canais eased vão a 0, logo os dois builds desenham o
+  mesmo frame — um A/B nessa condição não mede nada e foi por isso que não se fez. O ataque muda
+  apenas o tempo de subida; o valor assente é o mesmo, e o release mais curto só tira energia
+  integrada num som pulsado. Medido à parte: mediana do frame inteiro **16,20**, **0 píxeis
+  queimados**. Os 15,04/15,01 do lote anterior não são comparáveis com este número: a órbita
+  lenta da luz (±15° em ~2 min) e o slider mexido entre medições movem a mediana tanto como o
+  código, e é isso que obriga a registar os controlos ao lado do número.
+- **Ainda não verificado**: microfone a sério no celular/tablet. A régua prova o caminho interno
+  com sinais injetados; não prova o som da sala.
+
 ## 2026-10-18 — o visual passou a bater no instante do som, não no ponto da senoide (`v1su4rt-v19`)
 
 Lote S (sincronia microfone↔shaders). Antes de mexer, mediu-se o atraso real do caminho todo;

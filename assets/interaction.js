@@ -43,9 +43,22 @@
     // volume RMS do domínio do tempo
     levelGain: 5,
 
-    // suavização dos quatro valores: ataque rápido, release lento (taxa em 1/s)
-    attack: 28,
-    release: 7,
+    /* Suavização dos quatro valores: ataque rápido, release lento (taxa em 1/s).
+       Medido com a régua (`v1su4rtProbe.run()`, 145 Hz): com 28 o degrau sonoro só
+       cruzava os 50% aos 28 ms e os 90% aos 69 ms, enquanto o INSTANTE do mesmo golpe
+       chegava aos 7,5 ms — a onda já tinha saído e a cor ainda estava a caminho.
+       Com 90 os 50% passam a aos 7,3 ms e os 90% aos 21 ms, que é uma frame em vez de
+       quatro. Ficou também claro onde está o teto daqui para a frente: uma frame a
+       145 Hz vale 6,9 ms, mas num celular a 30 Hz vale 33 ms, por isso o que sobra de
+       atraso deixou de ser deste número e passou a ser a cadência do ecrã.
+       O release sobe de 7 para 9 só para que o novo ataque não deixe a flor a
+       estroboscopicar entre golpes: é o degrau de subida que tem de ser honesto, a
+       descida continua lenta para a luz ler como floração e não como lâmpada.
+       Tremura medida no degrau segurado, com 90: 0 nas três bandas e 0,065 a 0,078 de
+       pico-a-pico no nível — um tom sintético segurado é a entrada mais mansa que há,
+       por isso isto é o limite de baixo, não uma garantia para música. */
+    attack: 90,
+    release: 9,
 
     // batida: limiar relativo ao desvio recente, com piso absoluto e refractária.
     // O limiar fixo nunca disparava em música calma e disparava a tudo num

@@ -322,6 +322,130 @@
     setStatus('Este navegador não tem WebGL disponível, por isso o visual não pode ser desenhado.', 'warn');
   }
 
+  /* ---------- régua de sincronia (só corre se for chamada) ----------
+
+     O que aranha é o caminho todo, não uma parte dele: degrau injetado no mesmo
+     AnalyserNode → TUNE (piso/pico/normalização) → ease de ataque/release → read()
+     → carimbo em shaders.js. Cada número é medido contra o instante em que o degrau
+     FOI EMITIDO, que é o único chão de verdade que há sem microfone.
+
+     O degrau é uma senoide a 60 Hz com amplitude 0,22 (não satura `audio`, e um
+     canal cortado no teto não dá para cruzar os 90%) e um espetro plano: as três
+     bandas recebem o mesmo valor no mesmo instante, por isso o que as separa é o
+     caminho delas e não o som.
+
+     Depois de correr, as memórias das bandas voltam ao estado de arranque: o curso
+     foi apanhado a subir do silêncio para o degrau, e deixá-lo ficava a flor com o
+     piso de uma sala que nunca existiu. */
+  window.v1su4rtProbe = {
+    run: async function (opts) {
+      const o = opts || {};
+      const durMs = o.ms || 1100;
+      const amp = o.amp || 0.22;
+      const hz = o.hz || 60;
+      const SR = 48000;
+      const fftSize = sensors.analyser ? sensors.analyser.fftSize : 1024;
+      const saved = {
+        ctx: sensors.ctx, analyser: sensors.analyser, freq: sensors.freq, wave: sensors.wave,
+        audioOn: sensors.audioOn, read: sensors.read,
+      };
+      const t0 = performance.now();
+      let onsetAt = 0;
+      // uma régua tem de controlar as suas próprias condições: a sensibilidade do
+      // painel vai a 3 e com 3 todos os canais encostam no teto, pelo que a travessia
+      // dos 50% mediria o joelho suave e não o envelope. Fixa-se em 1 e devolve-se.
+      const savedSens = sensors.audioSens;
+      sensors.audioSens = 1;
+      sensors.ctx = { sampleRate: SR };
+      sensors.audioOn = true;
+      sensors.freq = new Uint8Array(fftSize / 2);
+      sensors.wave = new Uint8Array(fftSize);
+      sensors.analyser = {
+        fftSize: fftSize,
+        minDecibels: -100,
+        maxDecibels: -30,
+        getByteFrequencyData(arr) { arr.fill(onsetAt ? 200 : 0); },
+        getByteTimeDomainData(arr) {
+          const now = performance.now() - t0;
+          if (!onsetAt && now >= 60) onsetAt = now;
+          if (!onsetAt) { arr.fill(128); return; }
+          for (let i = 0; i < arr.length; i++) {
+            arr[i] = Math.round(128 + 127 * amp * Math.sin(2 * Math.PI * hz * (now - onsetAt) / 1000));
+          }
+        },
+      };
+      sensors._buildSpectrumMaps();
+
+      const rows = [];
+      sensors.read = function () {
+        const s = saved.read.call(sensors);
+        const sh = window.v1su4rtShaders && window.v1su4rtShaders.sinceHits
+          ? window.v1su4rtShaders.sinceHits() : null;
+        rows.push({
+          t: performance.now() - t0,
+          audio: s.level, bass: s.bass, mid: s.mid, treble: s.treble,
+          hit: s.hit ? 1 : 0, beat: sh ? sh.beat : -1,
+        });
+        return s;
+      };
+      await new Promise((res) => setTimeout(res, durMs));
+
+      sensors.read = saved.read;
+      sensors.audioSens = savedSens;
+      sensors.ctx = saved.ctx;
+      sensors.analyser = saved.analyser;
+      sensors.freq = saved.freq;
+      sensors.wave = saved.wave;
+      sensors.audioOn = saved.audioOn;
+      if (sensors.analyser) sensors._buildSpectrumMaps();
+      sensors.floor = { bass: 1, mid: 1, treble: 1 };
+      sensors.peak = { bass: 0, mid: 0, treble: 0 };
+      sensors.sm = { level: 0, bass: 0, mid: 0, treble: 0 };
+      sensors.timbre = 0.5;
+      sensors.timbreTgt = 0.5;
+      sensors.hitLo = 0; sensors.hitHi = 0;
+      sensors.hitLoNoise = 0; sensors.hitHiNoise = 0;
+
+      const n = rows.length;
+      const tail = rows.slice(Math.floor(n * 0.7));
+      const settle = (k) => {
+        const v = tail.map((r) => r[k]).sort((a, b) => a - b);
+        return v[Math.floor(v.length / 2)];
+      };
+      /* O risco de um ataque rápido não é o brilho médio — é o canal saltar de frame
+         para frame com um som que não mudou, que é o que se lê como estroboscópio
+         num ecrã de celular a 30 Hz. `jit` é o pico-a-pico do último terço do degrau
+         segurado, dividido pelo valor em que ele assentou: abaixo de 5% é invisível,
+         acima de ~15% vê-se. */
+      const jit = (k) => {
+        const v = tail.map((r) => r[k]);
+        const s = settle(k);
+        if (!s) return null;
+        return +(Math.max.apply(null, v) - Math.min.apply(null, v)) / s;
+      };
+      const cross = (k, frac) => {
+        const lim = settle(k) * frac;
+        for (const r of rows) if (r[k] >= lim) return +(r.t - onsetAt).toFixed(1);
+        return null;
+      };
+      const hit = rows.find((r) => r.hit);
+      const stamped = rows.find((r) => r.beat >= 0 && r.beat < 0.05);
+      const out = {
+        frames: n,
+        fps: n > 1 ? +(n / (rows[n - 1].t / 1000)).toFixed(0) : 0,
+        onsetMs: +onsetAt.toFixed(1),
+        settle: { audio: +settle('audio').toFixed(3), bass: +settle('bass').toFixed(3), mid: +settle('mid').toFixed(3), treble: +settle('treble').toFixed(3) },
+        ms50: { audio: cross('audio', 0.5), bass: cross('bass', 0.5), mid: cross('mid', 0.5), treble: cross('treble', 0.5) },
+        ms90: { audio: cross('audio', 0.9), bass: cross('bass', 0.9), mid: cross('mid', 0.9), treble: cross('treble', 0.9) },
+        jit: { audio: +jit('audio').toFixed(3), bass: +jit('bass').toFixed(3), mid: +jit('mid').toFixed(3), treble: +jit('treble').toFixed(3) },
+        hitMs: hit ? +(hit.t - onsetAt).toFixed(1) : null,
+        stampMs: stamped ? +(stamped.t - onsetAt).toFixed(1) : null,
+      };
+      console.table(out);
+      return out;
+    },
+  };
+
   /* ---------- instalação e offline ---------- */
 
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
