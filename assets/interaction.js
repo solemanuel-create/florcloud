@@ -176,11 +176,28 @@
     // ultrapassar para contar: é o que separa manter o aparelho inclinado de apontar.
     orientRecenter: 0.1,
     orientDeadband: 8,
+    // G1 — a pose quieta não pode demorar dez segundos a tornar-se o neutro. Um EMA
+    // do desvio em relação a uma referência lenta (orientPoseHz, τ de meio segundo)
+    // diz se a mão parou; orientStillDeg é a banda em que ela se considera parada;
+    // orientAdopt é quanto tempo parado antes de a base começar a correr atrás, a τ
+    // de 1/orientAdoptHz segundos. Os quatro juntos são o que separa "mudou a pose de
+    // uso" de "fez um gesto": um flick de 0,5 s nunca acumula orientAdopt.
+    orientPoseHz: 2,
+    orientStillDeg: 2.5,
+    orientAdopt: 1.2,
+    orientAdoptHz: 3,
 
-    // giroscópio: ±40° de inclinação percorrem o curso linear; o que houver acima
-    // disso soma muito pouco, porque o teto do canal é o ombro do funil, não este
-    // número. tiltMaxDeg é o único corte que resta.
+    // giroscópio: 40° de inclinação percorrem o curso linear — do x nos dois sentidos
+    // e do y para baixo. O que houver acima disso soma muito pouco, porque o teto do
+    // canal é o ombro do funil, não este número. tiltMaxDeg é o único corte que resta.
     tiltRange: 40,
+    // G2 — o eixo y não tem o mesmo curso dos dois lados da pose de uso: para cima
+    // há ~15° antes de o aparelho tombar para trás, para baixo há 80° até à mesa.
+    // Com um só número para os dois (40), o lado de cima nunca passava dos 6,4° de
+    // flor e o de baixo já tinha chegado ao teto. É por isto que G1 e G2 são o mesmo
+    // problema: o neutro tem de ser a pose de uso, e a pose de uso não é o centro de
+    // um curso simétrico.
+    tiltRangeUp: 15,
     // G3 — desde que o teto do canal é um só e assintótico, este já não é um teto
     // de resposta: é só a proteção contra um ângulo absurdo (um sensor avariado, ou
     // um beta que salta para 180° quando o aparelho passa acima do teto). 70° fica
@@ -252,6 +269,8 @@
       this.orientLive = false;
       this._orientSilent = 0;
       this._onGyro = null;
+      // G1 — a memória da pose quieta (referência lenta, desvio, tempo parado)
+      this._pose = null;
       this.base = null;
       this.baseAng = null;
       this.cur = { x: 0, y: 0 };
@@ -421,6 +440,9 @@
       if (this.base === null || this.baseAng !== ang) {
         this.base = { x: ax, y: ay };
         this.baseAng = ang;
+        // G1 — com a base nova o contador de pose quieta recomeça do zero: sem isto,
+        // a mão que ainda se move no instante do re-arma seria adotada como neutra
+        this._pose = null;
       }
       // o ângulo atual guarda-se e lê-se em update(dt): a re-centragem precisa de dt,
       // e o evento chega a 60 Hz enquanto o renderizador corre a 30 num celular fraco
@@ -662,13 +684,13 @@
       this.tilt.y += (this.tgt.y - this.tilt.y) * k;
     }
 
-    /* Re-centragem lenta: a pose em que o aparelho está passa a ser o neutro, por
-       isso segurar o telemóvel inclinado deixa de deixar a flor pendurada para
-       sempre. A banda morta é o que separa isso de apontar: sem ela, o gesto que se
-       mantém dez segundos apaga-se a si próprio a meio. O equilíbrio é um desvio de
-       exatamente orientDeadband — uma pose largada fica sempre a pender oito graus
-       do aparelho, que são 5,2° de flor à sensibilidade de fábrica: o suficiente
-       para se ler como intenção e não como defeito. */
+    /* Re-centragem: a pose em que o aparelho está passa a ser o neutro, por isso
+       segurar o telemóvel inclinado deixa de deixar a flor pendurada para sempre. A
+       banda morta é o que separa isso de apontar: sem ela, o gesto que se mantém dez
+       segundos apaga-se a si próprio a meio. O equilíbrio é um desvio de exatamente
+       orientDeadband — e sendo uma fração do curso, são oito graus de aparelho para
+       baixo e três para cima, sempre os 5,2° de flor à sensibilidade de fábrica: o
+       suficiente para se ler como intenção e não como defeito. */
     _recenter(dt) {
       if (!this.base) {
         this.tgt.x = 0;
@@ -677,11 +699,35 @@
       }
       const dx = this.cur.x - this.base.x;
       const dy = this.cur.y - this.base.y;
+      /* G1 — a re-centragem tinha um só tempo, τ de dez segundos, e isso é uma
+         eternidade quando o neutro foi apanhado numa pose que já não é a de uso:
+         medido em _g12.mjs, ativado deitado na mesa e depois pegado a 75° deixava a
+         flor colada no teto (17,19°) durante 23,8 s. Passa a haver dois regimes e o
+         que os escolhe é a pose estar quieta — um EMA do desvio em relação a uma
+         referência lenta vê se a mão parou, e ao fim de orientAdopt segundos parada a
+         base corre atrás com τ de 333 ms. A falha é para o lado seguro: se a mão
+         tremular mais de orientStillDeg nunca se adota, e fica-se pelo regime lento
+         de sempre. */
+      const kp = 1 - Math.exp(-dt * TUNE.orientPoseHz);
+      if (!this._pose) this._pose = { x: this.cur.x, y: this.cur.y, dev: 0, still: 0 };
+      const dev = Math.max(Math.abs(this.cur.x - this._pose.x), Math.abs(this.cur.y - this._pose.y));
+      this._pose.dev += (dev - this._pose.dev) * kp;
+      this._pose.x += (this.cur.x - this._pose.x) * kp;
+      this._pose.y += (this.cur.y - this._pose.y) * kp;
+      this._pose.still = this._pose.dev < TUNE.orientStillDeg ? this._pose.still + dt : 0;
+      const quieta = this._pose.still > TUNE.orientAdopt;
       if (this.orientOn && TUNE.orientRecenter > 0) {
-        const k = 1 - Math.exp(-dt * TUNE.orientRecenter);
-        const db = TUNE.orientDeadband;
-        if (Math.abs(dx) > db) this.base.x += (dx - Math.sign(dx) * db) * k;
-        if (Math.abs(dy) > db) this.base.y += (dy - Math.sign(dy) * db) * k;
+        const k = 1 - Math.exp(-dt * (quieta ? TUNE.orientAdoptHz : TUNE.orientRecenter));
+        if (Math.abs(dx) > TUNE.orientDeadband) {
+          this.base.x += (dx - Math.sign(dx) * TUNE.orientDeadband) * k;
+        }
+        /* G2 — com o curso do y assimétrico, a banda morta também tem de ser: é a
+           mesma fração de curso dos dois lados (8/40 = 0,2), medida no curso de cada
+           um. Ficam 3° para cima e 8° para baixo, e os dois deixam a flor a pender os
+           mesmos 5,2° de sempre — uma banda fixa em graus de aparelho penduraria 9,2°
+           de flor no lado de cima. */
+        const dbY = (TUNE.orientDeadband * (dy > 0 ? TUNE.tiltRangeUp : TUNE.tiltRange)) / TUNE.tiltRange;
+        if (Math.abs(dy) > dbY) this.base.y += (dy - Math.sign(dy) * dbY) * k;
       }
       /* G3 — o desvio já não é cortado aqui. Este clamp aos ±1 era o TETO VERDADEIRO
          de todo o canal: acima de tiltRange graus de aparelho nada se mexia em parte
@@ -692,7 +738,8 @@
          consumidores deixam de congelar a três ângulos diferentes. Limitar o ângulo
          bruto é o que basta para um sensor avariado não deitar tudo abaixo. */
       this.tgt.x = clamp(dx, -TUNE.tiltMaxDeg, TUNE.tiltMaxDeg) / TUNE.tiltRange;
-      this.tgt.y = clamp(dy, -TUNE.tiltMaxDeg, TUNE.tiltMaxDeg) / TUNE.tiltRange;
+      // G2 — só o y tem dois cursos: para cima é o que o pulso deixa (tiltRangeUp)
+      this.tgt.y = clamp(dy, -TUNE.tiltMaxDeg, TUNE.tiltMaxDeg) / (dy > 0 ? TUNE.tiltRangeUp : TUNE.tiltRange);
     }
 
     /* Valores prontos para o shader, já com a sensibilidade aplicada.

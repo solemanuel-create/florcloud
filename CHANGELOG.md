@@ -4,6 +4,87 @@ Formato seguido: uma entrada por mudança de visual ou de estrutura, com o `CACH
 correspondente do `service-worker.js` — é ele que diz ao browser para deitar fora a
 versão guardada.
 
+## 2026-10-19 — a pose de uso passa a ser o neutro, e o curso de cima encurta (`v1su4rt-v23`)
+
+Lote G1 + G2, o segundo do diagnóstico do giroscópio. Uma mexida só em `assets/interaction.js`:
+nenhum shader, nenhum uniforme, nenhuma cor tocada. O `scripts/check.mjs`, o `_knee.mjs` (o funil de
+G3) e as regressões do áudio correm verdes sobre ela, e o `_g12.mjs` corre **duas builds** pelas
+mesmas poses sintéticas — a comparação é literal, não uma reimplementação.
+
+**O problema é um, com dois nomes.** A base do tilt é a pose do instante em que a permissão é
+concedida, e esse instante raramente é a pose de uso: ativado com o aparelho deitado na mesa e
+depois pegado a 75° deixava a flor colada no teto — **17,19° durante 23,8 s** — porque só havia um
+tempo de re-centragem, τ de 10 s (`orientRecenter: 0,1`). E o curso à volta dessa base era simétrico
+(±40°) quando o corpo não é: para cima o pulso deixa ~10-15° antes de o aparelho tombar para trás,
+para baixo há 80° até à mesa.
+
+**G1 — dois regimes, escolhidos por a pose estar quieta.** Um EMA rápido da pose (`orientPoseHz: 2`,
+τ de 0,5 s) mede o desvio em relação a essa referência lenta; se ele couber em `orientStillDeg: 2,5`
+durante `orientAdopt: 1,2` s, a base passa a perseguir com τ de 333 ms (`orientAdoptHz: 3`) em vez de
+10 s. O que se adota é a pose, não o instante — um gesto a sério nunca está quieto 1,2 s, por isso
+continua no regime lento.
+- **A falha é para o lado seguro**: sem pose ainda (primeiro evento), com o sensor por re-arma, ou
+  com a mão a tremer mais de 2,5°, fica-se exatamente pelo comportamento de `v22`. Os números abaixo
+  são o melhor caso; o pior caso é o de sempre.
+- O contador recomeça do zero sempre que a base é capturada de novo (`_onOrient`, no re-arme de G5a,
+  e em `_clearSession`). Sem isto, a mão que ainda se movia no instante em que o sensor voltava era
+  adotada como neutra — um salto em vez de um repouso.
+- `orientRecenter: 0` continua a ser o interruptor de sempre, e com ele a adoção também não
+  acontece: os dois regimes partilham o mesmo `if`.
+
+**G2 — `tiltRangeUp: 15` só no semiplano de cima do `y`.** O `x` fica simétrico e o lado de baixo do
+`y` fica nos 40° de sempre; o caminho do rato/toque não foi tocado.
+- **A banda morta teve de ir atrás do curso**, e é a parte mais fácil de perder ao ler o diff: era
+  8° nos dois lados, passou a ser **proporcional** — `orientDeadband × curso / tiltRange`, ou seja
+  3° para cima e 8° para baixo. É a mesma fração de curso (0,2), e é isso que faz os dois lados
+  pendurarem os mesmos **5,16° de flor** de sempre. Uma banda fixa em 8° no lado de cima penduraria
+  9,2° — a pose adotada ficaria visivelmente torta, que é exatamente o defeito que G1 veio resolver.
+
+**Medição** (`_g12.mjs`, v22 real contra v23 real, 60 Hz, poses sintéticas com jitter de semente
+fixa; "assenta" = entrar e ficar dentro de 0,5° do valor final):
+
+| cena | antes | depois |
+|---|---|---|
+| deitado na mesa (0°), pego a 75° | assenta aos **23,82 s** | **6,57 s** |
+| na mão (75°), levantado para a cara (60°) | **17,1 s** | **4,4 s** |
+| na mão (75°), tombado para trás (85°) | **8,48 s** | **4,4 s** |
+| mesa→mão com ±0,6° de tremura em cada evento | **23,75 s** | **7,83 s** |
+| pico da flor nas três mudanças de pose | sem mudança | sem mudança (17,19° / −9,41° / 6,36°) |
+
+E o curso, em graus de flor à sensibilidade de fábrica (1,5), lido 0,1 s depois do movimento parar —
+o lado de baixo e o `x` são **idênticos ao milésimo** nos dois builds:
+
+| dy do aparelho | −40° | −20° | −10° | +5° | +10° | +15° | +30° |
+|---|---|---|---|---|---|---|---|
+| `v22` | −16,91 | −12,47 | −6,36 | 3,21 | 6,36 | 9,41 | 16,05 |
+| `v23` | −16,91 | −12,47 | −6,36 | **6,56** | **15,35** | **16,91** | 17,19 |
+
+- Ao contrário do que a tabela sugere, **o topo não subiu**: 17,19° é o teto de sempre. O que mudou
+  foi a distância até ele — 15° de aparelho em vez de 40°. É o curso a encolher para a dimensão do
+  gesto; o teto partilhado de G3 continua a ser o mesmo ombro assintótico.
+- **O preço, e é real**: uma pose **segurada** passa a ser o neutro. 30° de inclinação mantidos
+  deixavam a flor a 9,93° ao fim de 12 s e agora deixam-na a 5,16° ao fim de 8 s; um 40° percorrido
+  em 4 s e largado consome-se em ~8 s. Quem quiser inclinar e **manter** a inclinação tem de o fazer
+  a caminho — ou pôr `orientStillDeg: 0`, que declara a pose como nunca quieta e devolve o regime
+  único de 10 s sem mais nada (`orientAdopt: 0` faz o contrário: adota logo que a tremura para).
+- O **flick de 0,5 s a 40°** — o gesto rápido com que se marca uma inclinação — tem o pico intacto
+  nos dois builds (**16,92°**): 0,5 s é menos que os 1,2 s de quietude, por isso a adoção nem liga.
+- O repouso é o mesmo nos dois builds: **5,16° de flor** — 8° de banda sobre 40° de curso antes, 3°
+  sobre 15° depois, a mesma fração. A deriva lenta de 40° em 4 s é consumida até a flor estar outra
+  vez a 5,16° e fica lá.
+
+**No browser real** (a build servida confirmada por `fetch` do `interaction.js`, com
+`DeviceOrientationEvent` de verdade): ativado a 0° e segurado a 75°, a base chega aos 71,5° aos
+**5,5 s** e assenta em **72,0** — que é 75 − 3, a banda nova — com o canal final em **0,200**, o
+mesmo valor de `v22` (8/40 = 3/15). O `y` a ±10° a partir da pose capturada dá **0,667** para cima
+e **−0,250** para baixo (2,67×); o `x` dá **0,250**. Consola sem uma linha.
+
+**O que não foi verificado:** nada disto foi sentido num celular, e há duas coisas expostas a isso —
+(1) o limiar de quietude: 2,5° é permissivo no papel, mas um pulso apoiado no cotovelo pode tremer
+mais e nunca adotar, e um giroscópio ruidoso pode adotar poses que não estavam quietas; (2) os 15°
+de curso para cima, estimados da mecânica do braço e não medidos. Falta também à sensação do preço
+de cima: segurar 30° e vê-la desvanecer em ~5 s.
+
 ## 2026-10-19 — um teto só para a inclinação, e o giroscópio que volta (`v1su4rt-v22`)
 
 Lote G3 + G5a, os dois primeiros do diagnóstico do giroscópio. Nada aqui mexe na cor nem no
